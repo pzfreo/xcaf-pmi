@@ -92,12 +92,16 @@ def _enum(value) -> str:
 
 
 class _Faces:
-    """Each free shape's faces in OCCT's order, and their names from the document."""
+    """Each part's faces in OCCT's order, and their names from the document."""
 
     def __init__(self, shapes: XCAFDoc_ShapeTool):
         self.parts: list[dict[str, Any]] = []
         self._where: dict[int, tuple[int, list[int]]] = {}
-        for p, label in enumerate(_labels(shapes.GetFreeShapes)):
+        # Each part is a top-level shape that is not an assembly: an assembly's instances refer to
+        # these prototypes, and GD&T is linked to the prototype's own sub-shape labels (cadgen
+        # keeps even a single part as one instance of its prototype).
+        parts = [label for label in _labels(shapes.GetShapes) if not XCAFDoc_ShapeTool.IsAssembly_s(label)]
+        for p, label in enumerate(parts):
             shape = XCAFDoc_ShapeTool.GetShape_s(label)
             faces = ShapeMap()
             TopExp.MapShapes_s(shape, TopAbs_FACE, faces)
@@ -197,11 +201,18 @@ def read(path: str | Path) -> dict[str, Any]:
             "modifiers": [_enum(m) for m in obj.GetModifiers()],
         }
         if obj.IsDimWithPlusMinusTolerance():
-            item["tolerance"] = {"upper": obj.GetUpperTolValue(), "lower": obj.GetLowerTolValue()}
+            # XCAF holds the lower deviation as its size below nominal (OCCT's STEP writer negates
+            # it): reported signed, as the STEP states it (10 +0.2/-0.2: upper 0.2, lower -0.2).
+            item["tolerance"] = {"upper": obj.GetUpperTolValue(), "lower": -obj.GetLowerTolValue() + 0.0}
         elif obj.IsDimWithRange():
             item["range"] = {"lower": obj.GetLowerBound(), "upper": obj.GetUpperBound()}
         elif obj.IsDimWithClassOfTolerance():
             unread.append(f"dimension {item['id']}: class of tolerance (fit) not read yet")
+        if obj.HasDescriptions():
+            item["descriptions"] = [[_text(obj.GetDescriptionName(i)), _text(obj.GetDescription(i))]
+                                    for i in range(obj.NbDescriptions())]
+        # AP242's mark of a basic (theoretically exact) dimension, as cadgen and Specify write it.
+        item["basic"] = ["dimensional note", "theoretical"] in item.get("descriptions", [])
         if obj.HasQualifier():
             item["qualifier"] = _enum(obj.GetQualifier())
         dimensions.append(item)
@@ -226,6 +237,43 @@ def read(path: str | Path) -> dict[str, Any]:
             "faces": first,
         })
 
+    names = {item["id"]: item.get("name") for group in (datums, dimensions, tolerances) for item in group}
+
+    notes = []
+    if XCAFDoc_DocumentTool.CheckNotesTool_s(doc.Main()):
+        from OCP.XCAFDoc import XCAFDoc_NoteComment
+
+        notes_tool = XCAFDoc_DocumentTool.NotesTool_s(doc.Main())
+        for label in _labels(notes_tool.GetNotes):
+            if not label.IsAttribute(XCAFDoc_NoteComment.GetID_s()):
+                unread.append(f"note {_entry(label)}: not a comment note")
+                continue
+            notes.append({"id": _entry(label), "name": _name(label),
+                          "text": XCAFDoc_NoteComment.Get_s(label).Comment().ToExtString()})
+        if notes:
+            unread.append("notes: what each note is attached to is not read yet")
+
+    views = []
+    if XCAFDoc_DocumentTool.CheckViewTool_s(doc.Main()):
+        from OCP.XCAFDoc import XCAFDoc_View
+
+        view_tool = XCAFDoc_DocumentTool.ViewTool_s(doc.Main())
+        for label in _labels(view_tool.GetViewLabels):
+            obj = XCAFDoc_View.Set_s(label).GetObject()
+            point, direction, up = obj.ProjectionPoint(), obj.ViewDirection(), obj.UpDirection()
+            shown = _labels(lambda seq, l=label: view_tool.GetRefGDTLabel(l, seq))
+            views.append({
+                "id": _entry(label),
+                "name": _text(obj.Name()),
+                "projection": _enum(obj.Type()).removeprefix("XCAFView_ProjectionType_"),
+                "point": [point.X(), point.Y(), point.Z()],
+                "direction": [direction.X(), direction.Y(), direction.Z()],
+                "up": [up.X(), up.Y(), up.Z()],
+                "shows": [names.get(_entry(g)) or _entry(g) for g in shown],
+                "notes": [_name(n) or _entry(n) for n in _labels(lambda seq, l=label: view_tool.GetRefNoteLabel(l, seq))],
+                "clipped": bool(_labels(lambda seq, l=label: view_tool.GetRefClippingPlaneLabel(l, seq))),
+            })
+
     return {
         "format": FORMAT,
         "source": str(path),
@@ -233,6 +281,8 @@ def read(path: str | Path) -> dict[str, Any]:
         "datums": datums,
         "dimensions": dimensions,
         "tolerances": tolerances,
+        "notes": notes,
+        "views": views,
         "unread": unread,
     }
 

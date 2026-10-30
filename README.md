@@ -35,11 +35,20 @@ is drafted; haecceity then writes the PMI onto the STEP.
 
 ## Status
 
-Prototype. Read so far: datums (name, modifiers, target flag), dimensions (type, value, ±
-tolerance or range, qualifier, modifiers, both sides' faces) and geometric tolerances (type,
-value, zone, material condition, modifiers, datum references). Not yet: classes of tolerance
-(fits), datum target geometry, datum systems' modifiers per compartment, notes, views and the
+Prototype, tested on text-to-cad's `pmi_plate` as cadgen writes it (`tests/fixtures`) and on a
+plate built through OCCT's own GD&T API. Read:
+
+- datums (name, modifiers, target flag);
+- dimensions (type, value, ± tolerance signed as the STEP states it or a range, basic,
+  descriptions, qualifier, modifiers, both sides' faces);
+- geometric tolerances (type, value, zone, material condition, modifiers, datum references);
+- notes (their text) and views (name, projection, direction, up, section, the GD&T each shows).
+
+Not yet: classes of tolerance (fits), datum target geometry, what a note is attached to, and the
 GD&T's graphical presentation.
+
+A part kept as an assembly's prototype (as cadgen keeps every part) is read through its
+prototype, where its GD&T and face names are.
 
 ## Notes
 

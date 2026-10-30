@@ -92,8 +92,9 @@ def build(path: Path) -> Path:
         obj.SetType(kind)
         obj.SetValue(value)
         if upper is not None:
+            # XCAF's lower value is the size below nominal: 10 +0.2/-0.2 is upper 0.2, lower 0.2.
             obj.SetUpperTolValue(upper)
-            obj.SetLowerTolValue(lower)
+            obj.SetLowerTolValue(-lower)
         XCAFDoc_Dimension.Set_s(label).SetObject(obj)
         dimtol.SetDimension(seq(*first), seq(*second), label)
         return label
