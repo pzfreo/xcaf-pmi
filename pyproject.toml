@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xcaf-pmi"
+version = "0.0.1"
+description = "Read the GD&T in an OpenCascade XCAF document (.xbf) and write its geometry as AP242 STEP without PMI, for haecceity to add semantic PMI to"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Paul Fremantle" }]
+dependencies = ["cadquery-ocp-novtk>=8.0,<8.1"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+xcaf-pmi = "xcaf_pmi.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
