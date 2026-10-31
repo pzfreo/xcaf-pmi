@@ -11,7 +11,7 @@ XCAF document (text-to-cad's cadgen does), xcaf-pmi reads them out, and
 
 ```bash
 pip install git+https://github.com/pzfreo/xcaf-pmi        # xcaf-pmi (Python 3.11+, brings OCP)
-cargo install quiddity --features json                    # the quiddity command, which writes the PMI
+cargo install quiddity --features json-import             # the quiddity command (0.2.8+), which writes the PMI
 ```
 
 ## Make an AP242 STEP
@@ -51,13 +51,12 @@ subprocess.run(["quiddity", "pmi", "json", "import", "part.step", "part.pmi.json
 
 ## What is carried over
 
-- **Datums**, and point, line, rectangle and circle datum targets (written once quiddity 0.2.8 is
-  out; 0.2.7 refuses them).
+- **Datums**, including point, line, rectangle and circle datum targets.
 - **Dimensions:** sizes (diameter, radius, thickness …) and linear distances, with ± tolerances,
   ISO 286 fits (e.g. ⌀10 H7) or as basic dimensions.
 - **Geometric tolerances:** all fifteen kinds, with their datum references, a diameter zone and
   maximum or least material condition.
-- **Notes**, on the part or on faces (on a dimension or tolerance once quiddity 0.2.8 is out).
+- **Notes**, on the part, on faces, or on a dimension or tolerance.
 - **Material**, with its density stated in g/cm³. OCCT's own STEP writer gets that unit wrong
   (gram³·cm²), so readers ignore its density; this route writes it correctly.
 - **Names:** your item names (e.g. `thickness`, `hole-position`) become the PMI's ids, and your face
