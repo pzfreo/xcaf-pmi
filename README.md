@@ -10,14 +10,16 @@ the first.
 
 ```bash
 pip install -e .
-xcaf-pmi part.xbf -o part.pmi.json --step part.step
+xcaf-pmi part.xbf -o part.pmi.json --step part.step --haecceity part.haecceity.json
+quiddity pmi json import part.step part.haecceity.json -o part-with-pmi.step
 ```
 
 ```python
-from xcaf_pmi import read, export_step
+from xcaf_pmi import read, export_step, to_haecceity
 
 pmi = read("part.xbf")                  # datums, dimensions and tolerances, with their faces
 export_step("part.xbf", "part.step")    # geometry, names and colours; no GD&T
+doc = to_haecceity(pmi)["document"]     # haecceity.pmi/1, faces named as in part.step
 ```
 
 ## The two outputs
@@ -29,9 +31,16 @@ export_step("part.xbf", "part.step")    # geometry, names and colours; no GD&T
   the datums, dimensions and geometric tolerances with the faces they apply to. Anything it
   cannot interpret is listed in `unread`, not dropped.
 
-The JSON is an intermediate form in OCCT's own vocabulary (`xcaf-pmi.intermediate/0`). Its
-mapping to haecceity's PMI JSON (`haecceity.pmi/1`, quiddity-rust#142) comes once that schema
-is drafted; haecceity then writes the PMI onto the STEP.
+The JSON is an intermediate form in OCCT's own vocabulary (`xcaf-pmi.intermediate/0`).
+`to_haecceity` maps it to haecceity's PMI JSON (`haecceity.pmi/1`, quiddity-rust#142, a draft
+under review), referring to faces by the names the STEP carries. haecceity then writes the PMI
+onto the STEP (`quiddity pmi json import`, from a quiddity built with `--features json`).
+Anything without a mapping yet is listed, not guessed.
+
+On text-to-cad's `pmi_plate`, the PMI haecceity writes this way matches cadgen's own AP242
+export item for item (datums, dimensions with their basic flags and tolerances, the five
+tolerances, on the same faces), and adds the document's two notes, which cadgen's STEP leaves
+out. `QUIDDITY=/path/to/quiddity pytest` runs that route as a test.
 
 ## Status
 

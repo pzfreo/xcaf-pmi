@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 from pathlib import Path
 import re
 
@@ -97,3 +99,37 @@ def test_cadgen_plate():
 def test_cadgen_step_faces_follow_the_json(tmp_path):
     text = export_step(CADGEN, tmp_path / "plate.step").read_text(encoding="utf-8")
     assert re.findall(r"ADVANCED_FACE\(\s*'([^']*)'", text) == [f["name"] for f in read(CADGEN)["parts"][0]["faces"]]
+
+
+def test_cadgen_plate_as_haecceity_json():
+    from xcaf_pmi import to_haecceity
+
+    mapped = to_haecceity(read(CADGEN))
+    pmi = mapped["document"]["pmi"]
+    assert mapped["document"]["schema"] == "haecceity.pmi/1"
+    assert mapped["unmapped"] == ["notes: what each note is attached to is not read yet"]
+    assert [len(pmi[k]) for k in ("datums", "dimensions", "tolerances", "notes")] == [3, 4, 5, 2]
+    kinds = [t["value"]["kind"] for t in pmi["tolerances"]]
+    assert kinds == ["flatness_tolerance", "position_tolerance"] + ["surface_profile_tolerance"] * 3
+    assert [d["value"]["tolerance"] for d in pmi["dimensions"]][2:] == ["basic", "basic"]
+    assert all(isinstance(i["face"], dict) and i["face"]["name"].startswith("f:pmi_plate.")
+               for f in pmi["features"] for i in f["items"])
+
+
+@pytest.mark.skipif(not os.environ.get("QUIDDITY"), reason="QUIDDITY: a quiddity binary built with --features json")
+def test_haecceity_writes_it(tmp_path):
+    """The whole route: the document's geometry, then haecceity adds the mapped PMI to it."""
+    from xcaf_pmi import to_haecceity
+
+    quiddity = os.environ["QUIDDITY"]
+    step = export_step(CADGEN, tmp_path / "geometry.step")
+    doc = tmp_path / "pmi.json"
+    doc.write_text(json.dumps(to_haecceity(read(CADGEN))["document"]))
+    assert json.loads(subprocess.run([quiddity, "pmi", "json", "validate", str(doc)], check=True,
+                                     capture_output=True, text=True).stdout)["valid"]
+    out = json.loads(subprocess.run([quiddity, "pmi", "json", "import", str(step), str(doc), "-o",
+                                     str(tmp_path / "out.step")], check=True, capture_output=True, text=True).stdout)
+    assert out["differences"] == []
+    back = json.loads(subprocess.run([quiddity, "pmi", "json", "export", str(tmp_path / "out.step")], check=True,
+                                     capture_output=True, text=True).stdout)["pmi"]
+    assert [len(back[k]) for k in ("datums", "dimensions", "tolerances")] == [3, 4, 5]
