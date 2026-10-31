@@ -1,13 +1,13 @@
 import json
-import os
-import subprocess
 from pathlib import Path
 import re
 
 import pytest
+from quiddity import pmi
 
 from make_plate import build
-from xcaf_pmi import export_step, read
+from xcaf_pmi import NotCarriedOver, export_step, read, to_haecceity, to_step
+from xcaf_pmi.reader import geometry_step, open_document
 from xcaf_pmi.cli import main
 
 
@@ -113,11 +113,25 @@ def test_step_has_no_pmi_and_keeps_face_names_in_face_order(plate, tmp_path):
     assert in_step == in_json
 
 
-def test_cli(plate, tmp_path, capsys):
-    assert main([str(plate), "-o", str(tmp_path / "pmi.json"), "--step", str(tmp_path / "g.step")]) == 0
+def test_cli(tmp_path, capsys):
+    assert main([str(CADGEN), "-o", str(tmp_path / "part.step")]) == 0
+    assert [d["id"] for d in pmi.read(tmp_path / "part.step")["pmi"]["datums"]] == ["datum/A", "datum/B", "datum/C"]
+    err = capsys.readouterr().err
+    assert "xcaf-pmi: not carried over: note 0:1:9:1:2: also on dimension hole-diameter" in err
+    assert main([str(CADGEN), "-o", str(tmp_path / "strict.step"), "--strict"]) == 2
+    assert not (tmp_path / "strict.step").exists()
+
+
+def test_cli_advanced(plate, tmp_path, capsys):
+    assert main([str(plate), "--json", str(tmp_path / "pmi.json"), "--step", str(tmp_path / "g.step"),
+                 "--haecceity", str(tmp_path / "h.json")]) == 0
     assert json.loads((tmp_path / "pmi.json").read_text())["format"] == "xcaf-pmi.intermediate/0"
-    assert (tmp_path / "g.step").exists()
-    assert main([str(tmp_path / "missing.xbf")]) == 1
+    assert json.loads((tmp_path / "h.json").read_text())["schema"] == "haecceity.pmi/1"
+    assert b"GEOMETRIC_TOLERANCE" not in (tmp_path / "g.step").read_bytes()
+    capsys.readouterr()
+    assert main([str(plate), "--json", "-"]) == 0
+    assert json.loads(capsys.readouterr().out)["format"] == "xcaf-pmi.intermediate/0"
+    assert main([str(tmp_path / "missing.xbf"), "-o", str(tmp_path / "x.step")]) == 1
 
 
 def test_refuses_other_files(tmp_path):
@@ -197,26 +211,21 @@ def test_cadgen_plate_as_haecceity_json():
     assert [n["value"]["on"] for n in pmi["notes"]] == [None, {"feature": "feature/15"}]
 
 
-needs_quiddity = pytest.mark.skipif(not os.environ.get("QUIDDITY"),
-                                    reason="QUIDDITY: a quiddity binary built with --features json")
-
-
-def _quiddity(*args):
-    done = subprocess.run([os.environ["QUIDDITY"], "pmi", "json", *map(str, args)], capture_output=True, text=True)
-    if done.returncode:
-        raise RuntimeError(done.stderr.strip())
-    return json.loads(done.stdout)
-
-
-def _round_trip(tmp_path, xbf, sent):
-    """haecceity adds ``sent`` to the document's geometry; reading it back must give the same
-    items, ids, faces and note owners (quiddity-rust#142's v1 contract)."""
+def _round_trip(xbf, sent=None):
+    """haecceity adds ``sent`` (by default, all ``to_step`` carries) to the document's geometry;
+    reading it back must give the same items, ids, faces and note owners (quiddity-rust#142's v1
+    contract)."""
     found = read(xbf)
-    step = export_step(xbf, tmp_path / "geometry.step")
-    (tmp_path / "pmi.json").write_text(json.dumps(sent))
-    assert _quiddity("validate", tmp_path / "pmi.json")["valid"]
-    assert _quiddity("import", step, tmp_path / "pmi.json", "-o", tmp_path / "out.step")["differences"] == []
-    back = _quiddity("export", tmp_path / "out.step")["pmi"]
+    if sent is None:
+        sent = to_haecceity(found)["document"]
+        written, report = to_step(xbf, report=True)
+        assert report["unmapped"] == to_haecceity(found)["unmapped"]
+    else:
+        pmi.validate(sent)
+        written, details = pmi.write(geometry_step(open_document(xbf)), sent, report=True)
+        report = {"quiddity": details}
+    assert report["quiddity"]["differences"] == []
+    back = pmi.read(written)["pmi"]
 
     index = {f["name"]: f["index"] for f in found["parts"][0]["faces"] if "name" in f}
     face = lambda a: a["face"] if isinstance(a["face"], int) else index[a["face"]["name"]]
@@ -235,48 +244,40 @@ def _round_trip(tmp_path, xbf, sent):
     assert back["material"] == sent["pmi"]["material"]
     assert [d["value"]["tolerance"] for d in back["dimensions"]] == [d["value"]["tolerance"] for d in sent["pmi"]["dimensions"]]
     assert [n["value"]["text"] for n in back["notes"]] == [n["value"]["text"] for n in sent["pmi"]["notes"]]
-    return back
+    return back, report
 
 
-@needs_quiddity
-def test_haecceity_writes_it(tmp_path):
-    """The whole route on cadgen's plate: its notes, the flag note on the hole's face."""
-    from xcaf_pmi import to_haecceity
-
-    _round_trip(tmp_path, CADGEN, to_haecceity(read(CADGEN))["document"])
-
-
-def _without(doc, targets=False, item_notes=False):
-    """The document less its datum targets, or less the notes owned by a dimension or tolerance."""
-    doc = json.loads(json.dumps(doc))
-    pmi = doc["pmi"]
-    if targets:
-        pmi["datums"] = [d for d in pmi["datums"] if not d["value"]["targets"]]
-        pmi["datum_targets"] = []
-    if item_notes:
-        pmi["notes"] = [n for n in pmi["notes"] if not (n["value"]["on"] or {}).keys() & {"dimension", "tolerance"}]
-    return doc
+def test_to_step_cadgen_plate():
+    """The whole route on cadgen's plate: its items and ids, faces, notes (the flag note on the
+    hole's face), and its material with a density in a unit readers accept."""
+    back, report = _round_trip(CADGEN)
+    assert report["unmapped"] == ["note 0:1:9:1:2: also on dimension hole-diameter "
+                                  "(a note has one owner, here feature feature/15)"]
+    assert report["quiddity"]["read_findings"] == [] and report["quiddity"]["output_findings"] == []
+    assert [d["id"] for d in back["dimensions"]] == ["thickness", "hole-diameter", "hole-from-B", "hole-from-C"]
+    assert [n["value"]["text"] for n in back["notes"]] == ["Remove all burrs and break sharp edges",
+                                                           "Mask these features before coating with primer"]
+    assert back["material"]["density"] == {"value": "2.7", "unit": "unit/g-per-cm3"}
 
 
-@needs_quiddity
-def test_haecceity_writes_the_plate(plate, tmp_path):
-    """The fit and the notes on a face and on the part, as haecceity writes them today."""
-    from xcaf_pmi import to_haecceity
-
-    _round_trip(tmp_path, plate, _without(to_haecceity(read(plate))["document"], targets=True, item_notes=True))
-
-
-@needs_quiddity
-def test_haecceity_writes_datum_targets(plate, tmp_path):
-    """Datum targets keep their stated decimals through haecceity (fixed in quiddity 0.2.8)."""
-    from xcaf_pmi import to_haecceity
-
-    _round_trip(tmp_path, plate, _without(to_haecceity(read(plate))["document"], item_notes=True))
+def test_to_step_takes_bytes_and_refuses_in_strict_mode():
+    written = to_step(CADGEN.read_bytes())
+    assert written.startswith(b"ISO-10303-21;") and b"AP242_MANAGED_MODEL_BASED_3D_ENGINEERING" in written
+    assert [d["id"] for d in pmi.read(written)["pmi"]["dimensions"]][:2] == ["thickness", "hole-diameter"]
+    with pytest.raises(NotCarriedOver) as refused:
+        to_step(CADGEN, strict=True)
+    assert refused.value.unmapped == ["note 0:1:9:1:2: also on dimension hole-diameter "
+                                      "(a note has one owner, here feature feature/15)"]
 
 
-@needs_quiddity
-def test_haecceity_writes_notes_on_gdt(plate, tmp_path):
-    """Notes owned by a dimension or tolerance are written as AP242 allows (quiddity 0.2.8)."""
-    from xcaf_pmi import to_haecceity
-
-    _round_trip(tmp_path, plate, _without(to_haecceity(read(plate))["document"], targets=True))
+def test_to_step_plate(plate):
+    """The test plate in full: the ⌀10 H7 fit, the point and rectangle datum targets, and the notes
+    on a face, on the part and on the flatness tolerance."""
+    back, report = _round_trip(plate)
+    assert report["unmapped"] == []
+    hole = next(d for d in back["dimensions"] if d["value"]["kind"].get("size", {}).get("kind") == "diameter")
+    assert hole["value"]["tolerance"]["fit"]["class"] == {"deviation": {"letter": "h", "of": "hole"}, "grade": "7"}
+    assert [(t["value"]["shape"] if isinstance(t["value"]["shape"], str) else next(iter(t["value"]["shape"])),
+             t["value"]["number"]) for t in back["datum_targets"]] == [("point", 1), ("rectangle", 2)]
+    flatness = next(t["id"] for t in back["tolerances"] if t["value"]["kind"] == "flatness_tolerance")
+    assert {n["id"]: n["value"]["on"] for n in back["notes"]}["inspect"] == {"tolerance": flatness}

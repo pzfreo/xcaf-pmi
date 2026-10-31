@@ -44,13 +44,23 @@ from OCP.XmlXCAFDrivers import XmlXCAFDrivers
 FORMAT = "xcaf-pmi.intermediate/0"
 
 
-def open_document(path: str | Path) -> TDocStd_Document:
-    """Open an .xbf (BinXCAF) or .xml (XmlXCAF) document.
+def open_document(path: str | Path | bytes) -> TDocStd_Document:
+    """Open an .xbf (BinXCAF) or .xml (XmlXCAF) document, from its path or its bytes.
 
     The document is read through the format's retrieval driver into one made here: OCP cannot
     hand back the document the application's ``Open`` fills (it rebinds a handle the binding
     copied), so that call leaves the Python-side document empty. cadgen reads its xbf this way.
+    Bytes go through a temporary file: the drivers' stream reading expects the header the
+    application's own ``Open`` has already read.
     """
+    if isinstance(path, bytes):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            held = Path(folder) / ("document.xbf" if path.startswith(b"BINFILE") else "document.xml")
+            held.write_bytes(path)
+            return open_document(held)
+
     from OCP.BinXCAFDrivers import BinXCAFDrivers_DocumentRetrievalDriver
     from OCP.Message import Message_ProgressRange
     from OCP.XmlXCAFDrivers import XmlXCAFDrivers_DocumentRetrievalDriver
@@ -193,9 +203,13 @@ def _face(face, index: int) -> dict[str, Any]:
     }
 
 
-def read(path: str | Path) -> dict[str, Any]:
+def read(path: str | Path | bytes) -> dict[str, Any]:
     """The document's parts, faces and GD&T, in OCCT's terms."""
-    doc = open_document(path)
+    return read_document(open_document(path), "<bytes>" if isinstance(path, bytes) else str(path))
+
+
+def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
+    """``read`` on a document already open."""
     shapes = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     tool = XCAFDoc_DocumentTool.DimTolTool_s(doc.Main())
     faces = _Faces(shapes)
@@ -379,7 +393,7 @@ def read(path: str | Path) -> dict[str, Any]:
 
     return {
         "format": FORMAT,
-        "source": str(path),
+        "source": source,
         "parts": faces.parts,
         "datums": datums,
         "dimensions": dimensions,
@@ -390,10 +404,16 @@ def read(path: str | Path) -> dict[str, Any]:
     }
 
 
-def export_step(path: str | Path, output: str | Path) -> Path:
+def export_step(path: str | Path | bytes, output: str | Path) -> Path:
     """The document's geometry, names and colours as AP242 STEP, without its GD&T: the file the
     PMI JSON's faces refer to, for haecceity to add the PMI to."""
-    doc = open_document(path)
+    output = Path(output)
+    output.write_bytes(geometry_step(open_document(path)))
+    return output
+
+
+def geometry_step(doc: TDocStd_Document) -> bytes:
+    """``export_step`` on a document already open, as the STEP's bytes (no file written)."""
     # OCCT's translator reports its progress on stdout; a caller writing JSON there needs it quiet.
     from OCP.Message import Message, Message_Printer
     Message.DefaultMessenger_s().RemovePrinters(Message_Printer.get_type_descriptor_s())
@@ -411,7 +431,8 @@ def export_step(path: str | Path, output: str | Path) -> Path:
     writer.SetVisualMaterialMode(True)
     writer.SetDimTolMode(False)
     if not writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs):
-        raise RuntimeError(f"{path}: OCCT could not transfer the document to STEP")
-    if writer.Write(str(output)) != IFSelect_ReturnStatus.IFSelect_RetDone:
-        raise RuntimeError(f"{output}: OCCT could not write the STEP")
-    return Path(output)
+        raise RuntimeError("OCCT could not transfer the document to STEP")
+    out = io.BytesIO()
+    if writer.WriteStream(out) != IFSelect_ReturnStatus.IFSelect_RetDone:
+        raise RuntimeError("OCCT could not write the STEP")
+    return out.getvalue()
