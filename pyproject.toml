@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xcaf-pmi"
 version = "0.0.1"
-description = "Read the GD&T in an OpenCascade XCAF document (.xbf) and write its geometry as AP242 STEP without PMI, for haecceity to add semantic PMI to"
+description = "Turn the GD&T in an OpenCascade XCAF document (.xbf) into an AP242 STEP file with semantic PMI"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Paul Fremantle" }]
-dependencies = ["cadquery-ocp-novtk>=8.0,<8.1"]
+dependencies = ["cadquery-ocp-novtk>=8.0,<8.1", "quiddity>=0.4"]
 
 [project.optional-dependencies]
 test = ["pytest"]
