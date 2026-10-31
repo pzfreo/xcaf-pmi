@@ -58,40 +58,68 @@ class NotCarriedOver(ValueError):
         self.unmapped = unmapped
 
 
-def to_step(document: str | Path | bytes | Any, part: int = 0, *, strict: bool = False,
+def to_step(document: str | Path | bytes | Any, part: int | None = None, *, strict: bool = False,
             report: bool = False) -> bytes | tuple[bytes, dict[str, Any]]:
-    """The document (a path, its bytes, or an open ``TDocStd_Document``) as AP242 STEP bytes, its
-    GD&T as semantic PMI on part ``part``.
+    """The document (a path, its bytes, or an open ``TDocStd_Document``) as AP242 STEP bytes, the
+    GD&T of every part (or only of part ``part``) as semantic PMI.
 
     What could not be carried over is never dropped silently: with ``strict`` it raises
-    ``NotCarriedOver``, as it does for any difference haecceity finds reading the result back; with ``report`` the result is ``(bytes, {"unmapped": [...], "quiddity":
-    {...}})``, quiddity's report holding its read-back ``differences`` and its findings.
-    haecceity's refusals raise ``quiddity.PmiError``.
+    ``NotCarriedOver``, as it does for any difference haecceity finds reading the result back;
+    with ``report`` the result is ``(bytes, {"unmapped": [...], "quiddity": {...},
+    "presentation": {...}})``, quiddity's report holding its read-back ``differences`` and its
+    findings (for a document of several parts, those of all, and each part's in ``parts``), and
+    ``presentation`` the document's own callouts and saved views as ``haecceity.presentation/1``
+    (which quiddity 0.4 cannot yet write in place of its layout). haecceity's refusals raise
+    ``quiddity.PmiError``.
     """
     from OCP.TDocStd import TDocStd_Document
 
     doc = document if isinstance(document, TDocStd_Document) else open_document(document)
     found = read_document(doc, "<bytes>" if isinstance(document, bytes) else
                           "<document>" if doc is document else str(document))
-    mapped = to_haecceity(found, part)
-    if strict and mapped["unmapped"]:
-        raise NotCarriedOver(mapped["unmapped"])
-    # quiddity numbers the STEP's parts itself and needs one named only when there are several.
-    geometry = geometry_step(doc)
-    which = part if len(found["parts"]) > 1 else None
-    # Items to_xcaf kept whole that haecceity's writer refuses are left out, and said so: those it
-    # names, then the kept attributes (which may restate a kept thread), then all that was kept.
+    several = len(found["parts"]) > 1
+    if part is not None:
+        chosen = [part]
+    else:
+        # Each part with GD&T of its own, written one after the other onto the same STEP.
+        chosen = [i for i in range(len(found["parts"])) if _has_pmi(to_haecceity(found, i))] or [0]
+    written = geometry_step(doc)
+    unmapped, reports, presentation = [], [], None
+    for index in chosen:
+        mapped = to_haecceity(found, index)
+        lines = [f"part {index}: {line}" if several and part is None else line for line in mapped["unmapped"]]
+        if strict and lines:
+            raise NotCarriedOver(lines)
+        written, details = _write(written, mapped, index if several else None, strict)
+        unmapped += lines + mapped.get("refused", [])
+        reports.append(details)
+        presentation = presentation or mapped["presentation"]
+        if strict and details["differences"]:
+            raise NotCarriedOver([f"read back differently: {d}" for d in details["differences"]])
+    details = reports[0] if len(reports) == 1 else {
+        **{key: [x for r in reports for x in r[key]]
+           for key in ("differences", "read_findings", "writer_findings", "output_findings")},
+        "part": None, "parts": reports}
+    return (written, {"unmapped": unmapped, "quiddity": details, "presentation": presentation}) if report else written
+
+
+def _has_pmi(mapped: dict[str, Any]) -> bool:
+    pmi_ = mapped["document"]["pmi"]
+    return any(pmi_[k] for k in ("datums", "dimensions", "tolerances", "notes")) or pmi_["material"] is not None
+
+
+def _write(geometry: bytes, mapped: dict[str, Any], which: int | None, strict: bool):
+    """haecceity writing one part's PMI onto ``geometry``. Items to_xcaf kept whole that its
+    writer refuses are left out, and said so (in ``mapped["refused"]``): those it names, then the
+    kept attributes (which may restate a kept thread), then all that was kept."""
+    mapped.setdefault("refused", [])
     for attempt in range(4):
         try:
-            written, details = pmi.write(geometry, mapped["document"], report=True, part=which)
-            break
+            return pmi.write(geometry, mapped["document"], report=True, part=which)
         except pmi.PmiError as error:
             refused = _refused(mapped, str(error), attempt)
-            if not refused:
+            if not refused or attempt == 3:
                 raise
-            mapped["unmapped"] += refused
+            mapped["refused"] += refused
             if strict:
-                raise NotCarriedOver(mapped["unmapped"]) from error
-    if strict and details["differences"]:
-        raise NotCarriedOver([f"read back differently: {d}" for d in details["differences"]])
-    return (written, {"unmapped": mapped["unmapped"], "quiddity": details}) if report else written
+                raise NotCarriedOver(refused) from error

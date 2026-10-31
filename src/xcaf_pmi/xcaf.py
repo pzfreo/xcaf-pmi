@@ -365,6 +365,7 @@ class _Builder:
             if kind == "area" and not faces:
                 self.lose(f"{what}: its area has no faces")
                 return None
+            area = [self.topology.faces[i][1] for k, i in found if k == "face"]
         label = self.dimtol.AddDatum()
         obj = XCAFDimTolObjects_DatumObject()
         obj.SetName(_text(letter))
@@ -385,6 +386,13 @@ class _Builder:
             obj.SetDatumTargetLength(self.units.length_of(sizes.get("length") or sizes["diameter"]) or 0.0)
         if "width" in sizes:
             obj.SetDatumTargetWidth(self.units.length_of(sizes["width"]) or 0.0)
+        if kind == "area" and on:
+            # XCAF holds an area target's area as its shape.
+            builder, compound = BRep_Builder(), TopoDS_Compound()
+            builder.MakeCompound(compound)
+            for face in area:
+                builder.Add(compound, face)
+            obj.SetDatumTarget(compound)
         if t["movable"] is not None:
             self.lose(f"{what}: movable direction has no XCAF form")
         self.present(obj, id)

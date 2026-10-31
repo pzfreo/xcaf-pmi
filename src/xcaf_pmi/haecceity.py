@@ -172,8 +172,8 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
     def target(d: dict[str, Any], what: str) -> str | None:
         t = d["target"]
         if t["type"] == "Area":
-            # An area target is the area of the faces it is on.
-            area = feature(d["faces"], what)
+            # An area target is its shape's faces (XCAF's area), else the faces it is on.
+            area = feature(t.get("area") or d["faces"], what)
             if area is None:
                 return None
             id = f"datum_target/{d['name']}{t['number']}"
@@ -291,7 +291,14 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         return out or None
 
     dimensions = []
+    def elsewhere(*refs) -> bool:
+        """On faces of other parts only: that part's, not this one's to map."""
+        placed = [r for group in refs for r in group if "part" in r]
+        return bool(placed) and all(r["part"] != part for r in placed)
+
     for d in found["dimensions"]:
+        if elsewhere(d["faces"], d["to"]):
+            continue
         what = f"dimension {d.get('name') or d['id']}"
         angular = d["type"] in ("Location_Angular", "Size_Angular")
         value = _angle if angular else _length
@@ -340,6 +347,8 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
 
     tolerances = []
     for t in found["tolerances"]:
+        if elsewhere(t["faces"]):
+            continue
         what = f"tolerance {t.get('name') or t['id']}"
         named_mods = [_suffix(m, "GeomToleranceModif") for m in t["modifiers"]]
         others = [m for m in named_mods if m not in TOLERANCE_MODIFIER and m not in ("All_Around", "All_Over")]
@@ -382,6 +391,9 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
 
     notes = []
     for n in found.get("notes", []):
+        if elsewhere([r for item in n["on"] for r in item.get("faces", [])]) or \
+                (n["on"] and all("part" in item and item["part"] != part for item in n["on"])):
+            continue
         what = f"note {n.get('name') or n['id']}"
         on, rest = None, []
         faces_on = [ref for item in n["on"] if "faces" in item for ref in item["faces"]]
@@ -450,7 +462,51 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
     pmi = _one_unit_each(units, pmi)
     document = {"schema": SCHEMA, "units": units,
                 "pmi": pmi}
-    return {"document": document, "unmapped": unmapped, "restored": sorted(restored)}
+    return {"document": document, "unmapped": unmapped, "restored": sorted(restored),
+            "presentation": _presentation(found, pmi, ids, owners)}
+
+
+def _presentation(found: dict[str, Any], pmi: dict[str, Any], ids: dict[str, str],
+                  owners: dict[str, tuple[str, str]]) -> dict[str, Any]:
+    """The document's own callouts and saved views as ``haecceity.presentation/1``: each mapped
+    item's callout where the document placed it (``source: file``), its annotation plane and text
+    point, and each view's camera and the callouts it shows."""
+    mapped = {x["id"] for group in pmi.values() if isinstance(group, list) for x in group if isinstance(x, dict) and "id" in x}
+    of: dict[str, str] = {}  # an XCAF item's entry to its id in the PMI
+    for group in ("dimensions", "tolerances"):
+        for item in found[group]:
+            if ids.get(item["id"]) in mapped:
+                of[item["id"]] = ids[item["id"]]
+    for d in found["datums"]:
+        if d["id"] in owners:
+            of[d["id"]] = owners[d["id"]][1]
+        elif d["target"] is None and f"datum/{d['name']}" in mapped:
+            of[d["id"]] = f"datum/{d['name']}"
+    items: dict[str, list] = {}
+    planes, graphic_of = [], {}
+    for group in ("dimensions", "tolerances", "datums"):
+        for item in found[group]:
+            shown = item.get("presentation")
+            if not shown or item["id"] not in of or of[item["id"]] in items:
+                continue
+            graphic = {"id": f"graphic/{len(graphic_of)}", "source": "file", "name": shown["name"],
+                       "polylines": shown["polylines"], "triangles": shown["triangles"], "text": [],
+                       "step_ids": [], "unsupported": []}
+            plane = shown.get("plane")
+            if plane:
+                planes.append({"id": f"plane/{len(planes)}", "name": shown["name"], **plane})
+                graphic["plane_id"] = planes[-1]["id"]
+            if "text_point" in shown:
+                graphic["text_placements"] = [{"origin": shown["text_point"],
+                                               "x_axis": (plane or {}).get("x_axis", [1.0, 0.0, 0.0]),
+                                               "normal": (plane or {}).get("normal", [0.0, 0.0, 1.0])}]
+            items[of[item["id"]]] = [graphic]
+            graphic_of[item["id"]] = graphic["id"]
+    views = [{"id": f"view/{i}", "name": v["name"] or f"view {i}", "direction": v["direction"], "up": v["up"],
+              "graphics": [graphic_of[e] for e in v.get("shows_entries", []) if e in graphic_of]}
+             for i, v in enumerate(found.get("views", []))]
+    return {"schema": "haecceity.presentation/1", "length_unit": "millimetre", "items": items, "unlinked": [],
+            "semantic_ids": sorted(mapped), "planes": planes, "views": views}
 
 
 def _one_unit_each(units: dict[str, list], pmi: dict[str, Any]) -> dict[str, Any]:

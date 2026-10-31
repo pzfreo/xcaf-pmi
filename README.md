@@ -40,7 +40,7 @@ What it prints, on stderr:
   read or written (e.g. a free-text note kept as semantic text, or a datum target described as the
   CAx-IF practice asks where AP242's own rules disagree). Nothing is lost.
 
-Advanced: `--step geometry.step` writes the geometry alone (no PMI), `--haecceity part.pmi.json`
+Advanced: `--part N` carries only that part's GD&T (by default, every part's), `--step geometry.step` writes the geometry alone (no PMI), `--haecceity part.pmi.json`
 the PMI as haecceity's JSON, and `--json found.json` the GD&T as read, in OCCT's terms.
 
 ## Make an XCAF document from an AP242 STEP
@@ -105,17 +105,21 @@ print(report["findings"])                  # haecceity's findings on reading the
 ```
 
 `to_step(..., strict=True)` raises `xcaf_pmi.NotCarriedOver` (its `unmapped` lists what) instead
-of leaving anything out, and haecceity's refusals raise `quiddity.PmiError`. `part=` picks the
-part when the document holds several. `read`, `export_step` and `to_haecceity` are the steps on
+of leaving anything out, and haecceity's refusals raise `quiddity.PmiError`. A document of several
+parts has each part's GD&T written on its part; `part=` takes only one. `read`, `export_step` and `to_haecceity` are the steps on
 their own. `read` and `to_step` also accept an XmlXCAF `.xml` document.
 
 ## What is carried over
 
-- **Datums**, including point, line, rectangle and circle datum targets.
-- **Dimensions:** sizes (diameter, radius, thickness …) and linear distances, with ± tolerances,
-  ISO 286 fits (e.g. ⌀10 H7) or as basic dimensions.
-- **Geometric tolerances:** all fifteen kinds, with their datum references, a diameter zone and
-  maximum or least material condition.
+- **Datums**, including point, line, rectangle, circle and area datum targets (an area as XCAF
+  holds it, the target's shape, or the faces the target is on).
+- **Dimensions:** sizes (diameter, radius, thickness …), linear distances and angles, with ±
+  tolerances, limits, ISO 286 fits (e.g. ⌀10 H7) or as basic dimensions, and their modifiers and
+  qualifiers.
+- **Geometric tolerances:** all fifteen kinds, with their datum references (modifiers and common
+  datums too), a diameter zone, maximum or least material condition, a maximum value, a runout
+  zone's angle, all around, all over, and XCAF's other modifiers (free state, tangent plane,
+  statistical, line element, common zone …).
 - **Notes**, on the part, on faces, or on a dimension or tolerance. A note has one owner in the
   PMI: one also on something else is listed as not carried over for that.
 - **Material**, with its density stated in g/cm³. OCCT's own STEP writer gets that unit wrong
@@ -125,8 +129,15 @@ their own. `read` and `to_step` also accept an XmlXCAF `.xml` document.
 - **Drawn callouts:** each item gets a callout in haecceity's layout, linked to it as the CAx-IF
   practice asks, so CAD readers that show graphical PMI show it.
 
-Not yet: area datum targets, other tolerance modifiers, saved views, and the callout *positions*
-chosen in the document (the callouts are laid out afresh).
+Not yet:
+- **Projected tolerance zones.** AP242 needs to know where the projection ends, and XCAF holds only
+  its length, so these are listed as not carried over.
+- **Callout positions and saved views.** The callouts in the STEP are laid out afresh. The
+  document's own callouts (where it places them, on their annotation planes, with their text
+  points) and its saved views (camera and the items each shows) can be written out as
+  haecceity's presentation JSON with `--presentation part.presentation.json` (with `-o`;
+  `report["presentation"]` from Python). quiddity 0.4 cannot yet write that layout into the STEP
+  in place of its own.
 
 **Tested on text-to-cad's `pmi_plate`:** the AP242 made this way has the same datums, dimensions and
 tolerances, on the same faces, as cadgen's own AP242 export. It adds the two notes cadgen's STEP
@@ -138,8 +149,6 @@ callouts carry no names).
 
 ## Limits
 
-- A document with several parts is mapped one part at a time (`part=`); this has not yet been
-  tested on a multi-part document.
 - A document given as bytes is read through a temporary file (OCCT's in-memory BinXCAF reader is
   unusable from Python).
 - `to-xcaf` needs every PMI item quiddity 0.4 reads: a file it refuses (NIST's STC-06 and STC-09,
