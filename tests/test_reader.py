@@ -267,18 +267,16 @@ def test_haecceity_writes_the_plate(plate, tmp_path):
 
 
 @needs_quiddity
-@pytest.mark.xfail(strict=True, raises=RuntimeError, reason="haecceity writes a datum target's decimals "
-                   "in STEP's form (-30.0 as -30.), then refuses its own read-back as changed")
 def test_haecceity_writes_datum_targets(plate, tmp_path):
+    """Datum targets keep their stated decimals through haecceity (fixed in quiddity 0.2.8)."""
     from xcaf_pmi import to_haecceity
 
     _round_trip(tmp_path, plate, _without(to_haecceity(read(plate))["document"], item_notes=True))
 
 
 @needs_quiddity
-@pytest.mark.xfail(strict=True, raises=RuntimeError, reason="haecceity writes a note on a dimension or "
-                   "tolerance as a property_definition of it, outside characterized_definition")
 def test_haecceity_writes_notes_on_gdt(plate, tmp_path):
+    """Notes owned by a dimension or tolerance are written as AP242 allows (quiddity 0.2.8)."""
     from xcaf_pmi import to_haecceity
 
     _round_trip(tmp_path, plate, _without(to_haecceity(read(plate))["document"], targets=True))
