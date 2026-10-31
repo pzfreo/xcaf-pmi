@@ -13,7 +13,7 @@ from xcaf_pmi.reader import export_step, read
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xcaf-pmi", description=__doc__)
     parser.add_argument("document", help="an XCAF document: .xbf (BinXCAF) or .xml (XmlXCAF)")
-    parser.add_argument("-o", "--output", help="the GD&T as JSON (default: stdout)")
+    parser.add_argument("-o", "--output", help="the GD&T as read, in OCCT's terms (default: stdout, unless --step or --haecceity is given)")
     parser.add_argument("--step", help="also write the geometry as AP242 STEP, without PMI")
     parser.add_argument("--haecceity", help="also write the PMI as haecceity.pmi/1 (faces named as in --step)")
     parser.add_argument("--part", type=int, default=0, help="the part --haecceity maps (default 0)")
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         with open(args.output, "w", encoding="utf-8") as out:
             out.write(text + "\n")
-    else:
+    elif not (args.step or args.haecceity):
         print(text)
     problems = found["unread"]
     if args.haecceity:
