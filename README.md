@@ -32,15 +32,16 @@ doc = to_haecceity(pmi)["document"]     # haecceity.pmi/1, faces named as in par
   cannot interpret is listed in `unread`, not dropped.
 
 The JSON is an intermediate form in OCCT's own vocabulary (`xcaf-pmi.intermediate/0`).
-`to_haecceity` maps it to haecceity's PMI JSON (`haecceity.pmi/1`, quiddity-rust#142, a draft
-under review), referring to faces by the names the STEP carries. haecceity then writes the PMI
+`to_haecceity` maps it to haecceity's PMI JSON (`haecceity.pmi/1`, quiddity-rust#142's v1
+contract, in review as quiddity-rust#147), referring to faces by the names the STEP carries. haecceity then writes the PMI
 onto the STEP (`quiddity pmi json import`, from a quiddity built with `--features json`).
 Anything without a mapping yet is listed, not guessed.
 
 On text-to-cad's `pmi_plate`, the PMI haecceity writes this way matches cadgen's own AP242
 export item for item (datums, dimensions with their basic flags and tolerances, the five
 tolerances, on the same faces), and adds the document's two notes, which cadgen's STEP leaves
-out. `QUIDDITY=/path/to/quiddity pytest` runs that route as a test.
+out. Reading the written STEP back returns the same items under the same ids (`thickness`,
+`hole-position` …), which are cadgen's own item names. `QUIDDITY=/path/to/quiddity pytest` runs that route as a test.
 
 ## Status
 

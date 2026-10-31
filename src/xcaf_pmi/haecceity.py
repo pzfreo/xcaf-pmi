@@ -3,7 +3,9 @@
 
 Faces are referenced by the names ``export_step`` writes on them (``{"name": ...}``), or by
 index where a face has no name. One feature per reference, as haecceity's own export of a
-STEP makes them. What has no mapping yet is listed in ``unmapped``, never guessed.
+STEP makes them. Every reference between items is an item id (the v1 contract); ids are the
+producer's item names where it has them. What has no mapping yet is listed in ``unmapped``,
+never guessed.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 SCHEMA = "haecceity.pmi/1"
+MM = "unit/mm"
 
 SIZE = {
     "Size_CurveLength": "curve length", "Size_Diameter": "diameter",
@@ -53,7 +56,7 @@ def _decimal(value: float) -> str:
 
 
 def _length(value: float) -> dict[str, Any]:
-    return {"decimal_places": None, "quantity": {"length": {"unit": 0, "value": _decimal(value)}}}
+    return {"decimal_places": None, "quantity": {"length": {"unit": MM, "value": _decimal(value)}}}
 
 
 def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
@@ -69,12 +72,13 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         face = {"name": name} if name and names.count(name) == 1 else ref["face"]
         return {"face": face}
 
-    def feature(refs: list[dict[str, Any]], what: str) -> int | None:
+    def feature(refs: list[dict[str, Any]], what: str) -> str | None:
         if not refs or any("unresolved" in r or r.get("part") != part for r in refs):
             unmapped.append(f"{what}: faces not resolved on part {part}")
             return None
-        features.append({"items": [anchor(r) for r in refs]})
-        return len(features) - 1
+        id = f"feature/{len(features)}"
+        features.append({"id": id, "value": {"items": [anchor(r) for r in refs]}})
+        return id
 
     datums, letters = [], {}
     for d in found["datums"]:
@@ -84,9 +88,8 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         f = feature(d["faces"], f"datum {d['name']}")
         if f is None:
             continue
-        letters[d["name"]] = len(datums)
-        datums.append({"id": d.get("name") and f"datum/{d['name']}" or d["id"],
-                       "value": {"feature": f, "label": d["name"], "targets": []}})
+        letters[d["name"]] = f"datum/{d['name']}"
+        datums.append({"id": letters[d["name"]], "value": {"feature": f, "label": d["name"], "targets": []}})
 
     dimensions = []
     for d in found["dimensions"]:
@@ -153,6 +156,7 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         "general": [], "threads": [], "knurls": [], "holes": [], "material": None, "notes": notes,
         "surface_textures": [], "attributes": [], "geometry": [], "derived_geometry": [],
     }
-    document = {"schema": SCHEMA, "units": {"length": ["millimetre"], "angle": [], "density": [], "other": []},
+    units = {"length": [{"id": MM, "value": "millimetre"}], "angle": [], "density": [], "other": []}
+    document = {"schema": SCHEMA, "units": units,
                 "pmi": pmi}
     return {"document": document, "unmapped": unmapped}

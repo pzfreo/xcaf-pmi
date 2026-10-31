@@ -113,23 +113,35 @@ def test_cadgen_plate_as_haecceity_json():
     assert kinds == ["flatness_tolerance", "position_tolerance"] + ["surface_profile_tolerance"] * 3
     assert [d["value"]["tolerance"] for d in pmi["dimensions"]][2:] == ["basic", "basic"]
     assert all(isinstance(i["face"], dict) and i["face"]["name"].startswith("f:pmi_plate.")
-               for f in pmi["features"] for i in f["items"])
+               for f in pmi["features"] for i in f["value"]["items"])
 
 
 @pytest.mark.skipif(not os.environ.get("QUIDDITY"), reason="QUIDDITY: a quiddity binary built with --features json")
 def test_haecceity_writes_it(tmp_path):
-    """The whole route: the document's geometry, then haecceity adds the mapped PMI to it."""
+    """The whole route: the document's geometry, then haecceity adds the mapped PMI to it, and
+    reading it back gives the same items, ids and faces (quiddity-rust#142's v1 contract)."""
     from xcaf_pmi import to_haecceity
 
     quiddity = os.environ["QUIDDITY"]
+    run = lambda *args: json.loads(subprocess.run([quiddity, "pmi", "json", *map(str, args)], check=True,
+                                                  capture_output=True, text=True).stdout)
+    found = read(CADGEN)
     step = export_step(CADGEN, tmp_path / "geometry.step")
-    doc = tmp_path / "pmi.json"
-    doc.write_text(json.dumps(to_haecceity(read(CADGEN))["document"]))
-    assert json.loads(subprocess.run([quiddity, "pmi", "json", "validate", str(doc)], check=True,
-                                     capture_output=True, text=True).stdout)["valid"]
-    out = json.loads(subprocess.run([quiddity, "pmi", "json", "import", str(step), str(doc), "-o",
-                                     str(tmp_path / "out.step")], check=True, capture_output=True, text=True).stdout)
-    assert out["differences"] == []
-    back = json.loads(subprocess.run([quiddity, "pmi", "json", "export", str(tmp_path / "out.step")], check=True,
-                                     capture_output=True, text=True).stdout)["pmi"]
-    assert [len(back[k]) for k in ("datums", "dimensions", "tolerances")] == [3, 4, 5]
+    sent = to_haecceity(found)["document"]
+    (tmp_path / "pmi.json").write_text(json.dumps(sent))
+    assert run("validate", tmp_path / "pmi.json")["valid"]
+    assert run("import", step, tmp_path / "pmi.json", "-o", tmp_path / "out.step")["differences"] == []
+    back = run("export", tmp_path / "out.step")["pmi"]
+
+    index = {f["name"]: f["index"] for f in found["parts"][0]["faces"]}
+    face = lambda a: a["face"] if isinstance(a["face"], int) else index[a["face"]["name"]]
+
+    def faces_of(doc):
+        features = {f["id"]: sorted(face(i) for i in f["value"]["items"]) for f in doc["features"]}
+        return {d["id"]: features[d["value"]["feature"]] for d in doc["datums"]} | {
+            t["id"]: features[t["value"]["target"]["feature"]] for t in doc["tolerances"]}
+
+    for key in ("datums", "dimensions", "tolerances", "notes"):
+        assert [x["id"] for x in back[key]] == [x["id"] for x in sent["pmi"][key]], key
+    assert faces_of(back) == faces_of(sent["pmi"])
+    assert sorted(n["value"]["text"] for n in back["notes"]) == sorted(n["text"] for n in found["notes"])
