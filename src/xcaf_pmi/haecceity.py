@@ -14,6 +14,7 @@ whole part has no owner (a note of the part). What else a note is on is listed i
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 SCHEMA = "haecceity.pmi/1"
@@ -235,8 +236,18 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         datums.append({"id": letters[name], "value": {"feature": f, "label": name, "targets": targets}})
 
     # What to_xcaf kept of the STEP's PMI that XCAF could not hold, on this part: restored whole.
+    # Each fragment only where the document still states what it was kept for (see _checked).
     entry = found["parts"][part].get("entry")
-    kept = [k for k in found.get("kept", []) if k.get("schema") == "xcaf-pmi.kept/1" and k.get("part") == entry]
+    entries = {p.get("entry") for p in found["parts"]}
+    kept = []
+    for k in found.get("kept", []):
+        where = f"PMI to_xcaf kept on {k.get('on')}"
+        if k.get("schema") != KEPT_SCHEMA:
+            unmapped.append(f"{where}: its schema {k.get('schema')!r} is not {KEPT_SCHEMA!r}; left out")
+        elif k.get("part") not in entries:
+            unmapped.append(f"{where}: for part {k.get('part')}, which the document does not have; left out")
+        elif k["part"] == entry:
+            kept.append(_checked(k, unmapped))
     restored: set[str] = set()
 
     def restore(groups: tuple[str, ...], into: dict[str, list]) -> None:
@@ -245,6 +256,11 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
                 if held["group"] not in groups:
                     continue
                 item = held["item"]
+                if item["id"] in restored:
+                    # Two fragments with one id (a datum renamed as to_haecceity names it, say):
+                    # haecceity takes one item of an id.
+                    unmapped.append(f"{held['group']} {item['id']}: kept twice by to_xcaf; the second left out")
+                    continue
                 group = into[held["group"]]
                 at = next((i for i, x in enumerate(group) if x["id"] == item["id"]), None)
                 if at is None:
@@ -442,7 +458,7 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         "datums": datums, "material": material, "geometry": geometry, **groups,
     }
     densities = [{"id": G_PER_CM3, "value": [["gram", "1."], ["centimetre", "-3."]]}] if material and material["density"] else []
-    angles = [{"id": DEGREE, "value": "degree"}] if '"unit/degree"' in __import__("json").dumps(pmi) else []
+    angles = [{"id": DEGREE, "value": "degree"}] if '"unit/degree"' in json.dumps(pmi) else []
     units = {"length": [{"id": MM, "value": "millimetre"}], "angle": angles, "density": densities, "other": []}
     for more in units_kept:
         for kind, listed in more.items():
@@ -451,6 +467,49 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
     document = {"schema": SCHEMA, "units": units,
                 "pmi": pmi}
     return {"document": document, "unmapped": unmapped, "restored": sorted(restored)}
+
+
+KEPT_SCHEMA = "xcaf-pmi.kept/1"
+
+
+def _checked(fragment: dict[str, Any], unmapped: list[str]) -> dict[str, Any]:
+    """A kept fragment with only the items the document still states as they were kept: none if
+    its label's item has been edited since (its state differs; the document's own reading of it is
+    used), and none that is on a face or edge, by index, that is not the one it was (its
+    fingerprint differs). What is left out is said so."""
+    def what(held) -> str:
+        item = held["item"]
+        return f"{held['group']} {item['id']}" if isinstance(item, dict) and "id" in item else held["group"]
+
+    items = fragment.get("items") or []
+    now = fragment.get("now") or {}
+    if "state" not in fragment or "fingerprints" not in fragment:
+        unmapped += [f"{what(h)}: kept by to_xcaf without the state to check it against; left out" for h in items]
+        return {**fragment, "items": [], "features": [], "geometry": []}
+    if fragment["state"] != now.get("state"):
+        unmapped += [f"{what(h)}: edited in the document since to_xcaf; what XCAF cannot hold of it is left out, "
+                     "and the document's own reading used" for h in items]
+        return {**fragment, "items": [], "features": [], "geometry": []}
+    moved = {(kind, index) for kind in ("faces", "edges")
+             for index, print_ in fragment["fingerprints"].get(kind, {}).items()
+             if (now.get(kind) or {}).get(index) != print_}
+    if not moved:
+        return fragment
+    features = {f["id"]: f["value"] for f in fragment.get("features", [])}
+    bad = {id for id, v in features.items()
+           if any((f"{k}s", str(ref[k])) in moved for ref in v.get("items", []) for k in ("face", "edge") if k in ref)}
+    grew = True
+    while grew:
+        more = {id for id, v in features.items() if id not in bad and any(json.dumps(b) in json.dumps(v) for b in bad)}
+        bad |= more
+        grew = bool(more)
+    keep = []
+    for held in items:
+        if any(json.dumps(b) in json.dumps(held["item"]) for b in bad):
+            unmapped.append(f"{what(held)}: its faces or edges are not those to_xcaf kept it on; left out")
+        else:
+            keep.append(held)
+    return {**fragment, "items": keep}
 
 
 def _one_unit_each(units: dict[str, list], pmi: dict[str, Any]) -> dict[str, Any]:

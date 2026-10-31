@@ -27,7 +27,7 @@ from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
-from OCP.TopExp import TopExp
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopoDS import TopoDS
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDimTolObjects import XCAFDimTolObjects_DimensionFormVariance, XCAFDimTolObjects_DimensionGrade
@@ -123,10 +123,14 @@ class _Faces:
         self.labels: dict[str, int] = {}
         self._where: dict[int, tuple[int, list[int]]] = {}
         self._edges: dict[str, tuple[int, int]] = {}
+        self._edge_maps: list = []
         # Each part is a top-level shape that is not an assembly: an assembly's instances refer to
         # these prototypes, and GD&T is linked to the prototype's own sub-shape labels (cadgen
         # keeps even a single part as one instance of its prototype).
-        parts = [label for label in _labels(shapes.GetShapes) if not XCAFDoc_ShapeTool.IsAssembly_s(label)]
+        # A shape with no faces (an empty compound OCCT's reader makes, say) is no part: quiddity
+        # does not number it, and the parts here are numbered as quiddity numbers the STEP's.
+        parts = [label for label in _labels(shapes.GetShapes) if not XCAFDoc_ShapeTool.IsAssembly_s(label)
+                 and TopExp_Explorer(XCAFDoc_ShapeTool.GetShape_s(label), TopAbs_FACE).More()]
         for p, label in enumerate(parts):
             shape = XCAFDoc_ShapeTool.GetShape_s(label)
             faces = ShapeMap()
@@ -135,6 +139,7 @@ class _Faces:
             self.parts.append({"name": _name(label), "entry": _entry(label), "faces": listed, "material": _material(label)})
             edges = ShapeMap()
             TopExp.MapShapes_s(shape, TopAbs_EDGE, edges)
+            self._edge_maps.append(edges)
             for sub in _labels(lambda s, l=label: XCAFDoc_ShapeTool.GetSubShapes_s(l, s)):
                 index = faces.FindIndex(XCAFDoc_ShapeTool.GetShape_s(sub))
                 if index:
@@ -146,6 +151,23 @@ class _Faces:
                     self._edges[_key(sub)] = (p, edge - 1)
             self._where[_key(label)] = (p, list(range(faces.Extent())))
             self.labels[_key(label)] = p
+
+    def fingerprint(self, part: int, kind: str, index: int) -> dict[str, Any] | None:
+        """What identifies a part's face (its surface, area and centre) or edge (its curve, length
+        and centre), by its index in the part's map: for what is kept by index to be checked."""
+        if kind == "face":
+            faces = self.parts[part]["faces"]
+            return {k: faces[index][k] for k in ("surface", "area", "centroid")} if 0 <= index < len(faces) else None
+        edges = self._edge_maps[part]
+        if not 0 <= index < edges.Extent():
+            return None
+        from OCP.BRepAdaptor import BRepAdaptor_Curve
+        edge = TopoDS.Edge(edges.FindKey(index + 1))
+        props = GProp_GProps()
+        BRepGProp.LinearProperties_s(edge, props)
+        c = props.CentreOfMass()
+        return {"curve": _enum(BRepAdaptor_Curve(edge).GetType()).removeprefix("GeomAbs_").lower(),
+                "length": round(props.Mass(), 6), "centroid": [round(c.X(), 6), round(c.Y(), 6), round(c.Z(), 6)]}
 
     def ref(self, part: int, index: int) -> dict[str, Any]:
         face = self.parts[part]["faces"][index]
@@ -422,11 +444,21 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
 
     kept = []
     held = TDataStd_AsciiString()
+    items = {item["id"]: item for group in (datums, dimensions, tolerances, notes) for item in group}
+    entries = [p["entry"] for p in faces.parts]
     it = TDF_ChildIterator(doc.Main(), True)
     while it.More():
         label = it.Value()
         if label.IsAttribute(KEPT) and label.FindAttribute(KEPT, held):
-            kept.append({"on": _entry(label), **json.loads(held.Get().ToCString())})
+            try:
+                fragment = json.loads(held.Get().ToCString())
+                if not isinstance(fragment, dict):
+                    raise ValueError("not a JSON object")
+            except ValueError as error:
+                unread.append(f"PMI to_xcaf kept on {_entry(label)}: not readable ({error}); left out")
+            else:
+                kept.append({"on": _entry(label), **fragment,
+                             "now": _now(fragment, items.get(_entry(label)), faces, entries)})
         it.Next()
 
     return {
@@ -441,6 +473,40 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
         "views": views,
         "unread": unread,
     }
+
+
+def state(item: dict[str, Any] | None, entries: list[str]) -> str | None:
+    """A digest of a GD&T item as the document states it (but its callout): what to_xcaf keeps
+    of an item is restored only on the item as it was then. Faces are named by their part's
+    entry, not its number."""
+    if item is None:
+        return None
+    import hashlib
+
+    def placed(value):
+        if isinstance(value, dict):
+            return {k: (entries[v] if k == "part" and isinstance(v, int) and 0 <= v < len(entries) else placed(v))
+                    for k, v in value.items() if k != "presentation"}
+        if isinstance(value, list):
+            return [placed(v) for v in value]
+        return value
+
+    return hashlib.sha256(json.dumps(placed(item), sort_keys=True).encode()).hexdigest()
+
+
+def _now(fragment: dict[str, Any], item, faces: "_Faces", entries: list[str]) -> dict[str, Any]:
+    """The document as it is now, for what a kept fragment depends on: the state of the item on
+    its label, and the fingerprint of each face and edge its features name, by index."""
+    out: dict[str, Any] = {"state": state(item, entries), "faces": {}, "edges": {}}
+    part = entries.index(fragment["part"]) if fragment.get("part") in entries else None
+    if part is None:
+        return out
+    for feature in fragment.get("features") or []:
+        for ref in (feature.get("value") or {}).get("items", []):
+            for kind in ("face", "edge"):
+                if isinstance(ref.get(kind), int):
+                    out[f"{kind}s"][str(ref[kind])] = faces.fingerprint(part, kind, ref[kind])
+    return out
 
 
 def export_step(path: str | Path | bytes, output: str | Path) -> Path:

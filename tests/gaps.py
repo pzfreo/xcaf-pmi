@@ -34,11 +34,17 @@ TOLERANCE = {
     "Position": "position", "Roundness": "roundness", "Straightness": "straightness",
     "ProfileOfSurface": "surface_profile", "Symmetry": "symmetry", "TotalRunout": "total_runout",
 }
-# OCCT's tolerance modifiers (its enumeration's suffix), as the tokens counted here.
-MODIFIER = {"All_Around": "all around", "Statistical_Tolerance": "ST", "Free_State": "F",
-            "Tangent_Plane": "T", "All_Over": "all over"}
-DATUM_MODIFIER = {"MaximumMaterialRequirement": "M", "LeastMaterialRequirement": "L", "FreeState": "F",
-                  "Translation": "translation", "Basic": "basic"}
+# A modifier is counted as a token: NIST's symbol where it has one (M, L, P, F, T, ST), else
+# haecceity's name. OCCT's modifiers (its enumerations' suffixes) are first named as haecceity
+# names them (xcaf_pmi.haecceity's tables), so every modifier both readings know compares.
+from xcaf_pmi.haecceity import DATUM_MODIFIER as _OCCT_DATUM, TOLERANCE_MODIFIER as _OCCT_TOLERANCE
+
+_HMOD = {"maximum_material_requirement": "M", "least_material_requirement": "L", "statistical_tolerance": "ST",
+         "free_state": "F", "tangent_plane": "T"}
+_HDATUM = {"maximum_material_requirement": "M", "least_material_requirement": "L", "free_state": "F"}
+MODIFIER = {"All_Around": "all around", "All_Over": "all over",
+            **{occt: _HMOD.get(name, name) for occt, name in _OCCT_TOLERANCE.items()}}
+DATUM_MODIFIER = {occt: _HDATUM.get(name, name) for occt, name in _OCCT_DATUM.items()}
 ANGULAR = {"Location_Angular", "Size_Angular"}
 
 
@@ -109,10 +115,6 @@ def xcaf_facts(found: dict[str, Any], part: int | None = None) -> dict[str, Coun
 # What a STEP states, as haecceity reads it ---------------------------------------------------
 
 _HKIND = {f"{v}_tolerance": v for v in TOLERANCE.values()}
-_HMOD = {"maximum_material_requirement": "M", "least_material_requirement": "L", "statistical_tolerance": "ST",
-         "free_state": "F", "tangent_plane": "T"}
-_HDATUM = {"maximum_material_requirement": "M", "least_material_requirement": "L", "free_state": "F",
-           "translation": "translation", "basic": "basic"}
 _MM = {"millimetre": 1.0, "inch": 25.4, "metre": 1000.0, "centimetre": 10.0, "micrometre": 0.001, "foot": 304.8}
 
 
@@ -351,6 +353,77 @@ def step_facts(step) -> dict[str, Counter]:
     return out
 
 
+def placed(step, part: int | None = None) -> dict[str, Any]:
+    """haecceity's reading of a STEP (one part of it), each reference to a feature replaced by
+    where the feature is: the surface, area and centre of each of its faces and the curve, length
+    and centre of each edge, as OCCT reads them, and each unit by its definition. Two files'
+    readings then compare by place, not by their ids or numbering of faces and edges."""
+    import json
+
+    from quiddity import pmi
+
+    from xcaf_pmi import geometry as g
+    from xcaf_pmi.from_step import _choose, _parts
+
+    theirs = _parts(step)
+    index = part or 0
+    document = pmi.read(step, part=index if len(theirs) > 1 else None)
+    # OCCT's reader fails on a string longer than its scanner's buffer (quiddity 0.4 writes its
+    # map of ids as one): its geometry is read from a copy with such strings emptied.
+    import re
+    import tempfile
+    from pathlib import Path
+
+    text = Path(step).read_bytes()
+    short = re.sub(rb"'(?:[^']|'')*'", lambda m: b"''" if len(m.group(0)) > 20000 else m.group(0), text)
+    if short != text:
+        step = Path(tempfile.mkdtemp()) / "geometry.step"
+        step.write_bytes(short)
+    doc, entity_of = g.read_step_faces(step)
+    shape, offset = _choose(doc, theirs, index)
+    face_map = g.faces(step, shape, entity_of, offset)["faces"]
+    features = {f["id"]: f["value"] for f in document["pmi"]["features"]}
+    used = [i["edge"] for v in features.values() for i in v.get("items", []) if "edge" in i]
+    edge_map = g.edges(step, shape, entity_of, used, face_map, offset)["edges"]
+    whole = g.shape_map(shape.shape)
+    r = lambda v: round(v + 0.0, 3) + 0.0
+
+    def item(i):
+        if "face" in i:
+            k = face_map[i["face"]] if isinstance(i["face"], int) and i["face"] < len(face_map) else None
+            if k is None:
+                return ["face", None]
+            area, centre = g._props(whole.FindKey(k + 1))
+            return ["face", r(area), *map(r, centre)]
+        if "edge" in i:
+            j = edge_map.get(i["edge"])
+            return ["edge", None] if j is None else ["edge", g.edge_print(shape.edges[j][1])[0], *map(r, g.edge_print(shape.edges[j][1])[1:])]
+        return i
+
+    def where(id, seen=()):
+        v = features[id]
+        if "items" in v:
+            return sorted((item(i) for i in v["items"]), key=json.dumps)
+        kind, members = ("group", v["group"]) if "group" in v else ("derived", v["derived"])
+        return {kind: {k: x for k, x in members.items() if k not in ("members", "from")},
+                "on": sorted((where(m, seen + (id,)) for m in members.get("members") or members.get("from") or []
+                              if m not in seen), key=json.dumps)}
+
+    units = {u["id"]: u["value"] for listed in document["units"].values() for u in listed}
+
+    def resolved(value):
+        if isinstance(value, str):
+            return where(value) if value in features else units.get(value, value)
+        if isinstance(value, list):
+            return [resolved(v) for v in value]
+        if isinstance(value, dict):
+            return {k: resolved(v) for k, v in value.items()}
+        return value
+
+    return {group: [resolved(x) for x in listed] if isinstance(listed, list) else resolved(listed)
+            for group, listed in document["pmi"].items() if group not in ("features", "geometry")}
+
+
 def occt_step(xbf) -> bytes:
     """An XCAF document as OCCT's own STEP writer makes it, GD&T and material included (cadgen's
     export)."""
@@ -376,19 +449,34 @@ def occt_step(xbf) -> bytes:
 
 def row(step, truth: dict[str, Counter]) -> dict[str, tuple[int, int, int]]:
     """One file's line of the gap table: for each category, (OCCT's reader right, ``to_xcaf``
-    right, stated). A file haecceity refuses counts nothing for ``to_xcaf``."""
-    from quiddity import PmiError
-
+    right, stated). Where haecceity refuses a file or an item, to_xcaf takes OCCT's reading of it."""
     from xcaf_pmi.from_step import to_xcaf
     from xcaf_pmi.geometry import read_step
     from xcaf_pmi.reader import read_document
 
     native = score(truth, xcaf_facts(read_document(read_step(step, gdt=True), str(step))))
-    try:
-        ours = score(truth, xcaf_facts(read_document(to_xcaf(step), str(step))))
-    except PmiError:
-        ours = {key: (0, n) for key, (_, n) in native.items()}
+    ours = score(truth, xcaf_facts(read_document(to_xcaf(step), str(step))))
     return {key: (native[key][0], ours[key][0], native[key][1]) for key, _ in CATEGORIES}
+
+
+# Where each file's truth comes from: NIST's expected PMI, haecceity's own reading of a STEP
+# Specify or draftwright wrote (so a measure of what to_xcaf keeps of it, not of whether it is
+# right), and cadgen's document for cadgen's plate.
+SOURCES = {"NIST (expected PMI)": "nist", "Specify and draftwright (haecceity's own reading)": "haecceity",
+           "cadgen (its document)": "cadgen"}
+
+
+def source(name: str) -> str:
+    return "cadgen" if name.startswith("cadgen") else "nist" if name.startswith("nist_") and "_asme1_" in name else "haecceity"
+
+
+def totals(rows: dict[str, dict[str, tuple[int, int, int]]]) -> dict[str, tuple[int, int, int]]:
+    """For each truth source, (OCCT's reader right, to_xcaf right, stated) over every category."""
+    out = {}
+    for label, key in SOURCES.items():
+        cells = [cell for name, r in rows.items() if source(name) == key for cell in r.values()]
+        out[label] = tuple(sum(c[i] for c in cells) for i in range(3))
+    return out
 
 
 def table(tmp) -> dict[str, dict[str, tuple[int, int, int]]]:
@@ -401,12 +489,7 @@ def table(tmp) -> dict[str, dict[str, tuple[int, int, int]]]:
 
     out = {}
     for name in files.NIST + files.SPECIFY + files.DRAFTWRIGHT_FILES:
-        try:
-            path = files.step(name)
-        except BaseException as skipped:  # pytest.skip: not fetched
-            if type(skipped).__name__ != "Skipped":
-                raise
-            continue
+        path = files.step(name)  # a file not fetched skips (or fails) the whole table, not its row
         stated = files.expected(name)
         out[name] = row(path, nist_facts(stated) if stated else step_facts(path))
     xbf = Path(__file__).parent / "fixtures" / "cadgen_pmi_plate.xbf"
@@ -442,5 +525,8 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as folder:
         rows = table(folder)
     print(render(rows))
+    print()
+    for label, (native, ours, n) in totals(rows).items():
+        print(f"{label}: OCCT's reader {native}, to_xcaf {ours}, of {n}")
     print()
     print(repr(rows))

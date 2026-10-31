@@ -32,7 +32,8 @@ callout for each item. haecceity reads the file back before it is written and re
 difference.
 
 What it prints, on stderr:
-- `not carried over: …`: something in the document that has no place in the PMI. `--strict`
+- `not carried over: …`: something in the document that has no place in the PMI, or that could
+  not be checked (an edge whose number on the STEP written cannot be checked, say). `--strict`
   fails on these instead, writing nothing.
 - `read back differently: …`: haecceity's read-back found the file says something other than what
   was sent. Also fails `--strict`.
@@ -42,6 +43,10 @@ What it prints, on stderr:
 
 Advanced: `--step geometry.step` writes the geometry alone (no PMI), `--haecceity part.pmi.json`
 the PMI as haecceity's JSON, and `--json found.json` the GD&T as read, in OCCT's terms.
+
+Exit status, both ways: 0 written; 1 failed (an input that cannot be read, a part the file has
+not, haecceity's refusal, an output that cannot be written); 2 a usage error; 3 `--strict` found
+something not carried over, and nothing was written.
 
 ## Make an XCAF document from an AP242 STEP
 
@@ -62,21 +67,37 @@ What it prints, on stderr:
   surface texture, a general tolerance, a composite frame, the end of a projected tolerance zone,
   an item placed only on supplemental geometry …).
 - `read finding: …`: how haecceity read the STEP: what it repaired (OCCT's malformed density unit,
-  say), read leniently, or could not read. Nothing it reads is dropped without one.
-- `faces: … matched by entity`: the STEP's faces are numbered differently from OpenCascade's; they
-  were matched by the STEP entity each came from (by their geometry where that fails).
+  say), read leniently, or could not read. Nothing it reads is dropped without one. A finding of
+  kind `fallback` says haecceity refused a part, or did not read an item, and OpenCascade's own
+  reading of it was taken instead.
+- `faces: … matched by entity` (or `edges: …`): the STEP's faces or edges are numbered differently
+  from OpenCascade's; they were matched by the STEP entity each came from (faces by their geometry
+  where that fails, one to one). A face or edge that matches none, or more than one, is listed as
+  not carried over and its items are kept unanchored, never placed on a guess.
 
 **What XCAF cannot hold is kept on the document**, as haecceity's JSON on the item's XCAF label
-(the part's, for an item with none), so `to-step` restores it and the STEP → XCAF → STEP round
-trip keeps it. Other XCAF readers do not see it: to them it is an attribute they do not know.
+(the part's, for an item with none), with the state of the item and of the faces it is on when it
+was kept. `to-step` restores it where the document still states the same: an item edited since
+is written as the document now has it, and what was kept for it is listed as not carried over.
+Other XCAF readers do not see it: to them it is an attribute they do not know. What the round
+trip STEP → XCAF → STEP still loses is listed, never dropped silently: items on surfaces
+OpenCascade reads beside the solid, edges whose number haecceity gives cannot be checked, and
+items haecceity's writer refuses.
 
-**Compared with OpenCascade's own GD&T reader** (`STEPCAFControl_Reader` with GD&T on), on NIST's
-PMI test models (against NIST's expected PMI), Specify's output and cadgen's plate, `to-xcaf`
-gets as much or more right in every category, and keeps the notes and materials OpenCascade's
-reader drops. The exceptions: two NIST models (STC-06, STC-09) are refused whole by quiddity 0.4's
-reader, and on OpenCascade's own export of cadgen's plate quiddity refuses the position tolerance
-(OpenCascade writes its diameter zone as a runout zone with no angle; the finding says so).
-`python tests/gaps.py` prints the counts.
+**Compared with OpenCascade's own GD&T reader** (`STEPCAFControl_Reader` with GD&T on), on every
+test file `to-xcaf` gets every category at least as right, and keeps the notes and materials
+OpenCascade's reader drops: where haecceity refuses a file (quiddity 0.4 refuses NIST's STC-06
+and STC-09 whole) or does not read an item (the position tolerance of OpenCascade's own export of
+cadgen's plate, whose diameter zone it writes as a runout zone with no angle), `to-xcaf` takes
+OpenCascade's reading of it. Facts right of those stated, OpenCascade's reader / `to-xcaf`:
+
+| what the files state | OpenCascade | `to-xcaf` | stated |
+|---|---|---|---|
+| NIST's 7 PMI test models, against NIST's expected PMI | 590 | 611 | 738 |
+| 7 of Specify's outputs and draftwright's spindle, against haecceity's own reading of them (what `to-xcaf` keeps, not whether it is right) | 171 | 224 | 232 |
+| cadgen's plate, both exports, against cadgen's document | 44 | 55 | 66 |
+
+`python tests/gaps.py` prints them by file and category.
 
 
 ```python
@@ -142,8 +163,12 @@ callouts carry no names).
   tested on a multi-part document.
 - A document given as bytes is read through a temporary file (OCCT's in-memory BinXCAF reader is
   unusable from Python).
-- `to-xcaf` needs every PMI item quiddity 0.4 reads: a file it refuses (NIST's STC-06 and STC-09,
-  over their attributes' names) is refused whole.
+- Where quiddity 0.4 refuses a file (NIST's STC-06 and STC-09, over their attributes' names),
+  `to-xcaf` has only OpenCascade's reading of its GD&T: no notes, no kept extras.
+- quiddity 0.4 states no STEP entity for an edge: `to-xcaf` checks haecceity's edge numbers against
+  the edges the STEP's PMI is on, and reports those it cannot check (two of NIST STC-10's).
+- OpenCascade's STEP reader cannot read a string longer than its scanner's buffer; quiddity 0.4
+  writes its map of item ids as one string, which on NIST's STC-10 is too long for it (47 kB).
 - Where OpenCascade reads a part as a solid with surfaces beside it (some NIST models), PMI on those
   surfaces is carried into XCAF but not back to STEP.
 
