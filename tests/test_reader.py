@@ -156,6 +156,24 @@ def test_cadgen_plate():
     assert len(views["iso"]["shows"]) == 12
 
 
+def test_cadgen_material():
+    """cadgen's material, with XCAF's density in g/cm³, carried as haecceity's material and unit."""
+    from xcaf_pmi import to_haecceity
+
+    assert read(CADGEN)["parts"][0]["material"] == {"name": "Alu_G6061_T6", "description": None,
+                                                     "density": 2.7, "density_unit": "g/cm3"}
+    doc = to_haecceity(read(CADGEN))["document"]
+    assert doc["pmi"]["material"] == {"id": "Alu_G6061_T6", "name": None,
+                                      "density": {"value": "2.7", "unit": "unit/g-per-cm3"}}
+    assert doc["units"]["density"] == [{"id": "unit/g-per-cm3", "value": [["gram", "1."], ["centimetre", "-3."]]}]
+
+
+def test_cadgen_step_leaves_material_to_haecceity(tmp_path):
+    # OCCT's writer states density in gram³·cm²; the geometry STEP carries no material of its own.
+    text = export_step(CADGEN, tmp_path / "plate.step").read_text(encoding="utf-8")
+    assert "DERIVED_UNIT_ELEMENT" not in text and "'material name'" not in text
+
+
 def test_cadgen_step_faces_follow_the_json(tmp_path):
     text = export_step(CADGEN, tmp_path / "plate.step").read_text(encoding="utf-8")
     assert re.findall(r"ADVANCED_FACE\(\s*'([^']*)'", text) == [f["name"] for f in read(CADGEN)["parts"][0]["faces"]]
@@ -214,6 +232,7 @@ def _round_trip(tmp_path, xbf, sent):
     for key in ("datums", "datum_targets", "dimensions", "tolerances", "notes"):
         assert [x["id"] for x in back[key]] == [x["id"] for x in sent["pmi"][key]], key
     assert faces_of(back) == faces_of(sent["pmi"])
+    assert back["material"] == sent["pmi"]["material"]
     assert [d["value"]["tolerance"] for d in back["dimensions"]] == [d["value"]["tolerance"] for d in sent["pmi"]["dimensions"]]
     assert [n["value"]["text"] for n in back["notes"]] == [n["value"]["text"] for n in sent["pmi"]["notes"]]
     return back

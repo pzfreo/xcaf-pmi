@@ -58,6 +58,8 @@ subprocess.run(["quiddity", "pmi", "json", "import", "part.step", "part.pmi.json
 - **Geometric tolerances:** all fifteen kinds, with their datum references, a diameter zone and
   maximum or least material condition.
 - **Notes**, on the part or on faces (on a dimension or tolerance once quiddity 0.2.8 is out).
+- **Material**, with its density stated in g/cm³. OCCT's own STEP writer gets that unit wrong
+  (gram³·cm²), so readers ignore its density; this route writes it correctly.
 - **Names:** your item names (e.g. `thickness`, `hole-position`) become the PMI's ids, and your face
   names are kept in the STEP, so the PMI points at faces by name.
 
@@ -65,8 +67,9 @@ Not yet: area datum targets, other tolerance modifiers, views, and the document'
 callouts (graphical PMI).
 
 **Tested on text-to-cad's `pmi_plate`:** the AP242 made this way has the same datums, dimensions and
-tolerances, on the same faces, as cadgen's own AP242 export, and it also carries the two notes
-that cadgen's STEP leaves out.
+tolerances, on the same faces, as cadgen's own AP242 export. It adds the two notes cadgen's STEP
+leaves out, a stable id for each item, and the material's density in a unit readers accept. The
+callouts are haecceity's own layout: the positions chosen in the document are not carried yet.
 
 ## More
 
