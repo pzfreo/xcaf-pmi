@@ -26,7 +26,7 @@ from OCP.STEPControl import STEPControl_StepModelType
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TDocStd import TDocStd_Document
-from OCP.TopAbs import TopAbs_FACE
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
 from OCP.TopExp import TopExp
 from OCP.TopoDS import TopoDS
 from OCP.XCAFApp import XCAFApp_Application
@@ -122,6 +122,7 @@ class _Faces:
         self.parts: list[dict[str, Any]] = []
         self.labels: dict[str, int] = {}
         self._where: dict[int, tuple[int, list[int]]] = {}
+        self._edges: dict[str, tuple[int, int]] = {}
         # Each part is a top-level shape that is not an assembly: an assembly's instances refer to
         # these prototypes, and GD&T is linked to the prototype's own sub-shape labels (cadgen
         # keeps even a single part as one instance of its prototype).
@@ -131,13 +132,18 @@ class _Faces:
             faces = ShapeMap()
             TopExp.MapShapes_s(shape, TopAbs_FACE, faces)
             listed = [_face(TopoDS.Face(faces.FindKey(i)), i - 1) for i in range(1, faces.Extent() + 1)]
-            self.parts.append({"name": _name(label), "faces": listed, "material": _material(label)})
+            self.parts.append({"name": _name(label), "entry": _entry(label), "faces": listed, "material": _material(label)})
+            edges = ShapeMap()
+            TopExp.MapShapes_s(shape, TopAbs_EDGE, edges)
             for sub in _labels(lambda s, l=label: XCAFDoc_ShapeTool.GetSubShapes_s(l, s)):
                 index = faces.FindIndex(XCAFDoc_ShapeTool.GetShape_s(sub))
                 if index:
                     if (name := _name(sub)) is not None:
                         listed[index - 1]["name"] = name
                     self._where[_key(sub)] = (p, [index - 1])
+                elif edge := edges.FindIndex(XCAFDoc_ShapeTool.GetShape_s(sub)):
+                    # An edge, by its index in the part's map of edges.
+                    self._edges[_key(sub)] = (p, edge - 1)
             self._where[_key(label)] = (p, list(range(faces.Extent())))
             self.labels[_key(label)] = p
 
@@ -148,6 +154,10 @@ class _Faces:
     def refs(self, labels) -> list[dict[str, Any]]:
         out = []
         for label in labels:
+            if _key(label) in self._edges:
+                part, edge = self._edges[_key(label)]
+                out.append({"part": part, "edge": edge})
+                continue
             part, indices = self._where.get(_key(label), (None, []))
             if part is None:
                 out.append({"unresolved": _name(label) or _entry(label)})
@@ -244,10 +254,13 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
             "id": _entry(label),
             "name": _text(obj.GetName()),
             "modifiers": [_enum(m) for m in obj.GetModifiers()],
+            # Its compartment in the datum system of the tolerance it is made for (0: none stated).
+            "position": obj.GetPosition(),
             "target": target,
             "faces": first,
         })
     by_entry = {d["id"]: d["name"] for d in datums}
+    datum_of = {d["id"]: d for d in datums}
 
     dimensions = []
     for label in _labels(tool.GetDimensionLabels):
@@ -288,6 +301,8 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
         item["basic"] = ["dimensional note", "theoretical"] in item.get("descriptions", [])
         if obj.HasQualifier():
             item["qualifier"] = _enum(obj.GetQualifier())
+        if obj.HasAngularQualifier():
+            item["angle"] = _enum(obj.GetAngularQualifier()).removeprefix("XCAFDimTolObjects_AngularQualifier_")
         dimensions.append(item)
 
     tolerances = []
@@ -306,7 +321,15 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
             "zone": _enum(obj.GetTypeOfValue()).removeprefix("XCAFDimTolObjects_GeomToleranceTypeValue_"),
             "material": _enum(obj.GetMaterialRequirementModifier()).removeprefix("XCAFDimTolObjects_GeomToleranceMatReqModif_"),
             "modifiers": [_enum(m) for m in obj.GetModifiers()],
+            "zone_modifier": _enum(obj.GetZoneModifier()).removeprefix("XCAFDimTolObjects_GeomToleranceZoneModif_"),
+            "zone_value": obj.GetValueOfZoneModifier(),
+            "maximum": obj.GetMaxValueModifier(),
             "datums": [by_entry.get(_entry(r), _entry(r)) for r in refs],
+            # Each datum referred to, in order: its name, compartment and modifiers.
+            "datum_refs": [{"datum": _entry(r), "name": by_entry.get(_entry(r)),
+                            "position": datum_of[_entry(r)]["position"] if _entry(r) in datum_of else 0,
+                            "modifiers": datum_of[_entry(r)]["modifiers"] if _entry(r) in datum_of else []}
+                           for r in refs],
             "faces": first,
         })
 
@@ -391,9 +414,25 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
                 "clipped": bool(_labels(lambda seq, l=label: view_tool.GetRefClippingPlaneLabel(l, seq))),
             })
 
+    # What to_xcaf kept of a STEP's PMI that XCAF cannot hold (xcaf.KEPT), on any label.
+    from OCP.TDataStd import TDataStd_AsciiString
+    from OCP.TDF import TDF_ChildIterator
+
+    from xcaf_pmi.xcaf import KEPT
+
+    kept = []
+    held = TDataStd_AsciiString()
+    it = TDF_ChildIterator(doc.Main(), True)
+    while it.More():
+        label = it.Value()
+        if label.IsAttribute(KEPT) and label.FindAttribute(KEPT, held):
+            kept.append({"on": _entry(label), **json.loads(held.Get().ToCString())})
+        it.Next()
+
     return {
         "format": FORMAT,
         "source": source,
+        "kept": kept,
         "parts": faces.parts,
         "datums": datums,
         "dimensions": dimensions,
