@@ -121,7 +121,7 @@ class _Faces:
             faces = ShapeMap()
             TopExp.MapShapes_s(shape, TopAbs_FACE, faces)
             listed = [_face(TopoDS.Face(faces.FindKey(i)), i - 1) for i in range(1, faces.Extent() + 1)]
-            self.parts.append({"name": _name(label), "faces": listed})
+            self.parts.append({"name": _name(label), "faces": listed, "material": _material(label)})
             for sub in _labels(lambda s, l=label: XCAFDoc_ShapeTool.GetSubShapes_s(l, s)):
                 index = faces.FindIndex(XCAFDoc_ShapeTool.GetShape_s(sub))
                 if index:
@@ -144,6 +144,29 @@ class _Faces:
                 continue
             out.extend(self.ref(part, i) for i in indices)
         return out
+
+
+def _material(label) -> dict[str, Any] | None:
+    """The material a part's label refers to (XCAF's material reference), with its density as
+    XCAF holds it: a mass density in g/cm³."""
+    from OCP.TDataStd import TDataStd_TreeNode
+    from OCP.XCAFDoc import XCAFDoc, XCAFDoc_Material
+
+    guid = XCAFDoc.MaterialRefGUID_s()
+    node = TDataStd_TreeNode()
+    if not (label.IsAttribute(guid) and label.FindAttribute(guid, node)) or node.Father() is None:
+        return None
+    material = XCAFDoc_Material()
+    held = node.Father().Label()
+    if not (held.IsAttribute(XCAFDoc_Material.GetID_s()) and held.FindAttribute(XCAFDoc_Material.GetID_s(), material)):
+        return None
+    density = material.GetDensity()
+    return {
+        "name": _text(material.GetName()),
+        "description": _text(material.GetDescription()) or None,
+        "density": density if density > 0 else None,
+        "density_unit": "g/cm3",
+    }
 
 
 def _key(label) -> str:
@@ -382,6 +405,10 @@ def export_step(path: str | Path, output: str | Path) -> Path:
     writer.SetNameMode(True)
     writer.SetColorMode(True)
     writer.SetLayerMode(True)
+    # Material is left to haecceity (to_haecceity carries it): OCCT's writer states a density's unit
+    # as gram³·cm² (DERIVED_UNIT_ELEMENT exponents 3 and 2), which readers rightly ignore.
+    writer.SetMaterialMode(False)
+    writer.SetVisualMaterialMode(True)
     writer.SetDimTolMode(False)
     if not writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs):
         raise RuntimeError(f"{path}: OCCT could not transfer the document to STEP")

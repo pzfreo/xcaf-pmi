@@ -18,6 +18,7 @@ from typing import Any
 
 SCHEMA = "haecceity.pmi/1"
 MM = "unit/mm"
+G_PER_CM3 = "unit/g-per-cm3"
 
 SIZE = {
     "Size_CurveLength": "curve length", "Size_Diameter": "diameter",
@@ -244,13 +245,22 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         notes.append({"id": ids[n["id"]],
                       "value": {"kind": "semantic text", "text": n["text"], "on": on, "callouts": []}})
 
+    # The material: XCAF's density is g/cm³. OCCT's own STEP writer states that unit as gram³·cm²,
+    # which readers rightly ignore; haecceity writes it as the derived unit it is.
+    held = found["parts"][part].get("material")
+    material = None
+    if held and held["name"]:
+        density = None if held["density"] is None else {"value": _decimal(held["density"]), "unit": G_PER_CM3}
+        material = {"id": held["name"], "name": None, "density": density}
+
     pmi = {
         "standards": [], "decimal_places": None, "features": features, "datum_targets": datum_targets,
         "datums": datums, "dimensions": dimensions, "tolerances": tolerances, "tolerance_relations": [],
-        "general": [], "threads": [], "knurls": [], "holes": [], "material": None, "notes": notes,
+        "general": [], "threads": [], "knurls": [], "holes": [], "material": material, "notes": notes,
         "surface_textures": [], "attributes": [], "geometry": [], "derived_geometry": [],
     }
-    units = {"length": [{"id": MM, "value": "millimetre"}], "angle": [], "density": [], "other": []}
+    densities = [{"id": G_PER_CM3, "value": [["gram", "1."], ["centimetre", "-3."]]}] if material and material["density"] else []
+    units = {"length": [{"id": MM, "value": "millimetre"}], "angle": [], "density": densities, "other": []}
     document = {"schema": SCHEMA, "units": units,
                 "pmi": pmi}
     return {"document": document, "unmapped": unmapped}
