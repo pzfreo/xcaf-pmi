@@ -8,6 +8,8 @@ fallback. Mapping it to haecceity's PMI JSON (quiddity-rust#142) is a separate s
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,7 @@ from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp
 from OCP.TopoDS import TopoDS
 from OCP.XCAFApp import XCAFApp_Application
+from OCP.XCAFDimTolObjects import XCAFDimTolObjects_DimensionFormVariance, XCAFDimTolObjects_DimensionGrade
 from OCP.XCAFDoc import (
     XCAFDoc_Datum,
     XCAFDoc_DimTolTool,
@@ -91,11 +94,23 @@ def _enum(value) -> str:
     return value.name
 
 
+def _xyz(v) -> list[float]:
+    return [v.X(), v.Y(), v.Z()]
+
+
+def _dumped(obj) -> dict[str, Any]:
+    """An OCCT object's own ``DumpJson``: the fields OCP has no getter for."""
+    out = io.BytesIO()
+    obj.DumpJson(out)
+    return json.loads("{" + out.getvalue().decode() + "}")
+
+
 class _Faces:
     """Each part's faces in OCCT's order, and their names from the document."""
 
     def __init__(self, shapes: XCAFDoc_ShapeTool):
         self.parts: list[dict[str, Any]] = []
+        self.labels: dict[str, int] = {}
         self._where: dict[int, tuple[int, list[int]]] = {}
         # Each part is a top-level shape that is not an assembly: an assembly's instances refer to
         # these prototypes, and GD&T is linked to the prototype's own sub-shape labels (cadgen
@@ -114,6 +129,11 @@ class _Faces:
                         listed[index - 1]["name"] = name
                     self._where[_key(sub)] = (p, [index - 1])
             self._where[_key(label)] = (p, list(range(faces.Extent())))
+            self.labels[_key(label)] = p
+
+    def ref(self, part: int, index: int) -> dict[str, Any]:
+        face = self.parts[part]["faces"][index]
+        return {"part": part, "face": index, **({"name": face["name"]} if "name" in face else {})}
 
     def refs(self, labels) -> list[dict[str, Any]]:
         out = []
@@ -122,9 +142,7 @@ class _Faces:
             if part is None:
                 out.append({"unresolved": _name(label) or _entry(label)})
                 continue
-            for i in indices:
-                face = self.parts[part]["faces"][i]
-                out.append({"part": part, "face": i, **({"name": face["name"]} if "name" in face else {})})
+            out.extend(self.ref(part, i) for i in indices)
         return out
 
 
@@ -175,11 +193,21 @@ def read(path: str | Path) -> dict[str, Any]:
         # made); FindAttribute fills a detached copy whose object OCP cannot reach.
         obj = XCAFDoc_Datum.Set_s(label).GetObject()
         first, _ = on(label)
+        # OCCT keeps each datum target as a datum of its own, named as its datum and numbered.
+        target = None
+        if obj.IsDatumTarget():
+            target = {"type": _enum(obj.GetDatumTargetType()).removeprefix("XCAFDimTolObjects_DatumTargetType_"),
+                      "number": obj.GetDatumTargetNumber()}
+            if obj.HasDatumTargetParams():
+                axis = obj.GetDatumTargetAxis()
+                target |= {"length": obj.GetDatumTargetLength(), "width": obj.GetDatumTargetWidth(),
+                           "origin": _xyz(axis.Location()), "axis": _xyz(axis.Direction()),
+                           "x": _xyz(axis.XDirection())}
         datums.append({
             "id": _entry(label),
             "name": _text(obj.GetName()),
             "modifiers": [_enum(m) for m in obj.GetModifiers()],
-            "target": bool(obj.IsDatumTarget()),
+            "target": target,
             "faces": first,
         })
     by_entry = {d["id"]: d["name"] for d in datums}
@@ -206,8 +234,16 @@ def read(path: str | Path) -> dict[str, Any]:
             item["tolerance"] = {"upper": obj.GetUpperTolValue(), "lower": -obj.GetLowerTolValue() + 0.0}
         elif obj.IsDimWithRange():
             item["range"] = {"lower": obj.GetLowerBound(), "upper": obj.GetUpperBound()}
-        elif obj.IsDimWithClassOfTolerance():
-            unread.append(f"dimension {item['id']}: class of tolerance (fit) not read yet")
+        if obj.IsDimWithClassOfTolerance():
+            # GetClassOfTolerance returns its values through references OCP cannot fill; the
+            # object's DumpJson states them. A class may stand beside a ± tolerance (H7 +0.015/0).
+            held = _dumped(obj)
+            item["fit"] = {
+                "hole": bool(held["IsHole"]),
+                "letter": _enum(XCAFDimTolObjects_DimensionFormVariance(held["FormVariance"]))
+                .removeprefix("XCAFDimTolObjects_DimensionFormVariance_"),
+                "grade": _enum(XCAFDimTolObjects_DimensionGrade(held["Grade"])).removeprefix("XCAFDimTolObjects_DimensionGrade_"),
+            }
         if obj.HasDescriptions():
             item["descriptions"] = [[_text(obj.GetDescriptionName(i)), _text(obj.GetDescription(i))]
                                     for i in range(obj.NbDescriptions())]
@@ -238,20 +274,64 @@ def read(path: str | Path) -> dict[str, Any]:
         })
 
     names = {item["id"]: item.get("name") for group in (datums, dimensions, tolerances) for item in group}
+    kinds = {item["id"]: kind for kind, group in (("datum", datums), ("dimension", dimensions),
+                                                  ("tolerance", tolerances)) for item in group}
 
     notes = []
     if XCAFDoc_DocumentTool.CheckNotesTool_s(doc.Main()):
-        from OCP.XCAFDoc import XCAFDoc_NoteComment
+        from OCP.TDF import TDF_Label, TDF_Tool
+        from OCP.XCAFDoc import XCAFDoc_AssemblyItemRef, XCAFDoc_NoteComment
 
         notes_tool = XCAFDoc_DocumentTool.NotesTool_s(doc.Main())
+
+        def annotated(ref) -> dict[str, Any]:
+            """What an annotated item is: faces, a GD&T item (by its entry) or a whole part."""
+            # An item is a path of labels (an assembly's occurrences down to the item); its last
+            # label is the item, and a component stands for the part it instances.
+            label = TDF_Label()
+            TDF_Tool.Label_s(doc.GetData(), ref.GetItem().GetPath().Last(), label)
+            if XCAFDoc_ShapeTool.IsReference_s(label):
+                referred = TDF_Label()
+                XCAFDoc_ShapeTool.GetReferredShape_s(label, referred)
+                label = referred
+            entry = _entry(label)
+            if ref.IsSubshapeIndex():
+                # The index is the face's in its part's map of faces (1-based), as cadgen writes it.
+                index, part = ref.GetSubshapeIndex(), faces.labels.get(entry)
+                if part is None or not 1 <= index <= len(faces.parts[part]["faces"]):
+                    return {"faces": [{"unresolved": f"{entry} sub-shape {index}"}]}
+                return {"faces": [faces.ref(part, index - 1)]}
+            if entry in kinds:
+                return {kinds[entry]: entry}
+            if entry in faces.labels:
+                return {"part": faces.labels[entry]}
+            return {"faces": faces.refs([label])}
+
+        attached: dict[str, list[dict[str, Any]]] = {}
+        for item in _labels(notes_tool.GetAnnotatedItems):
+            if not item.IsAttribute(XCAFDoc_AssemblyItemRef.GetID_s()):
+                unread.append(f"annotated item {_entry(item)}: no item reference")
+                continue
+            ref = XCAFDoc_AssemblyItemRef.Get_s(item)
+            found = Sequence_TDF_Label()
+            # Notes on an item, on one attribute of it (taken as on the item) or on a sub-shape.
+            if ref.IsSubshapeIndex():
+                notes_tool.GetSubshapeNotes(ref.GetItem(), ref.GetSubshapeIndex(), found)
+            elif ref.IsGUID():
+                notes_tool.GetAttrNotes(ref.GetItem(), ref.GetGUID(), found)
+            else:
+                notes_tool.GetNotes(ref.GetItem(), found)
+            what = annotated(ref)
+            for i in range(1, found.Length() + 1):
+                attached.setdefault(_entry(found.Value(i)), []).append(what)
+
         for label in _labels(notes_tool.GetNotes):
             if not label.IsAttribute(XCAFDoc_NoteComment.GetID_s()):
                 unread.append(f"note {_entry(label)}: not a comment note")
                 continue
             notes.append({"id": _entry(label), "name": _name(label),
-                          "text": XCAFDoc_NoteComment.Get_s(label).Comment().ToExtString()})
-        if notes:
-            unread.append("notes: what each note is attached to is not read yet")
+                          "text": XCAFDoc_NoteComment.Get_s(label).Comment().ToExtString(),
+                          "on": attached.get(_entry(label), [])})
 
     views = []
     if XCAFDoc_DocumentTool.CheckViewTool_s(doc.Main()):

@@ -6,6 +6,10 @@ index where a face has no name. One feature per reference, as haecceity's own ex
 STEP makes them. Every reference between items is an item id (the v1 contract); ids are the
 producer's item names where it has them. What has no mapping yet is listed in ``unmapped``,
 never guessed.
+
+A note has one owner in ``haecceity.pmi/1``: the faces it is on (one feature of them all), or,
+where it is on no face, the first dimension, tolerance or datum target it annotates. A note on a
+whole part has no owner (a note of the part). What else a note is on is listed in ``unmapped``.
 """
 
 from __future__ import annotations
@@ -47,16 +51,43 @@ TOLERANCE = {
     "ProfileOfSurface": "surface_profile_tolerance", "Symmetry": "symmetry_tolerance",
     "TotalRunout": "total_runout_tolerance",
 }
+TARGET = {"Point": "point", "Line": "line", "Rectangle": "rectangle", "Circle": "circle"}
 ZONE = {"None": None, "Diameter": "cylindrical or circular", "SphericalDiameter": "spherical"}
 MATERIAL = {"None": None, "M": "maximum_material_requirement", "L": "least_material_requirement"}
 
 
 def _decimal(value: float) -> str:
-    return repr(float(value)).replace("inf", "0")
+    return repr(float(value) + 0.0).replace("inf", "0")
+
+
+def _mm(value: float) -> dict[str, Any]:
+    return {"unit": MM, "value": _decimal(value)}
 
 
 def _length(value: float) -> dict[str, Any]:
-    return {"decimal_places": None, "quantity": {"length": {"unit": MM, "value": _decimal(value)}}}
+    return {"decimal_places": None, "quantity": {"length": _mm(value)}}
+
+
+def _ids(items: list[dict[str, Any]]) -> dict[str, str]:
+    """Each item's id: its name where no other item of its kind has it, else its entry (OCCT
+    names every unnamed dimension "DGT:Dimension" and every unnamed tolerance "DGT:Tolerance")."""
+    names = [item.get("name") for item in items]
+    return {item["id"]: item["name"] if item.get("name") and names.count(item["name"]) == 1 else item["id"]
+            for item in items}
+
+
+def _fit(d: dict[str, Any]) -> dict[str, Any]:
+    """ISO 286's class (H7), with the limits a ± tolerance beside it gives (10 H7 +0.015/0:
+    10.015 and 10), summed in decimal so that they read as written."""
+    from decimal import Decimal
+
+    fit = d["fit"]
+    limits = None
+    if "tolerance" in d:
+        at = lambda deviation: _length(float(Decimal(repr(d["value"])) + Decimal(repr(deviation))))
+        limits = {"lower": at(d["tolerance"]["lower"]), "upper": at(d["tolerance"]["upper"])}
+    return {"fit": {"class": {"deviation": {"letter": fit["letter"].lower(), "of": "hole" if fit["hole"] else "shaft"},
+                              "grade": fit["grade"].removeprefix("IT")}, "limits": limits}}
 
 
 def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
@@ -80,16 +111,53 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         features.append({"id": id, "value": {"items": [anchor(r) for r in refs]}})
         return id
 
-    datums, letters = [], {}
+    ids = _ids(found["dimensions"]) | _ids(found["tolerances"]) | _ids(found.get("notes", []))
+    owners: dict[str, tuple[str, str]] = {}  # a mapped item's kind and id, by its entry: a note's owner
+
+    def target(d: dict[str, Any], what: str) -> str | None:
+        t = d["target"]
+        if t["type"] not in TARGET:
+            unmapped.append(f"{what}: {t['type'].lower()} target not mapped yet")
+            return None
+        if "origin" not in t:
+            unmapped.append(f"{what}: no target parameters")
+            return None
+        on = feature(d["faces"], what) if d["faces"] else None
+        if d["faces"] and on is None:
+            return None
+        shape = {"Point": lambda: "point", "Line": lambda: {"line": {"length": _mm(t["length"])}},
+                 "Rectangle": lambda: {"rectangle": {"length": _mm(t["length"]), "width": _mm(t["width"])}},
+                 # XCAF holds a circle's diameter as its length, as OCCT's STEP reader and writer do.
+                 "Circle": lambda: {"circle": {"diameter": _mm(t["length"])}}}[t["type"]]()
+        id = f"datum_target/{d['name']}{t['number']}"
+        datum_targets.append({"id": id, "value": {
+            "number": t["number"], "shape": shape, "movable": None, "on": on,
+            "placement": {"origin": [_mm(v) for v in t["origin"]], "axis": [_decimal(v) for v in t["axis"]],
+                          "ref_direction": [_decimal(v) for v in t["x"]]}}})
+        owners[d["id"]] = ("datum_target", id)
+        return id
+
+    # OCCT keeps each target of a datum as a datum of the same name: one haecceity datum each name,
+    # on the faces of its datum that is no target (if any), with its targets.
+    named: dict[str, list[dict[str, Any]]] = {}
     for d in found["datums"]:
-        if d["modifiers"] or d["target"]:
-            unmapped.append(f"datum {d['name']}: modifiers or targets not mapped yet")
+        named.setdefault(d["name"], []).append(d)
+    datums, datum_targets, letters = [], [], {}
+    for name, group in named.items():
+        what = f"datum {name}"
+        plain = [d for d in group if d["target"] is None]
+        if any(d["modifiers"] for d in group) or len(plain) > 1:
+            unmapped.append(f"{what}: modifiers, or more than one datum feature, not mapped yet")
             continue
-        f = feature(d["faces"], f"datum {d['name']}")
-        if f is None:
+        f = feature(plain[0]["faces"], what) if plain else None
+        if plain and f is None:
             continue
-        letters[d["name"]] = f"datum/{d['name']}"
-        datums.append({"id": letters[d["name"]], "value": {"feature": f, "label": d["name"], "targets": []}})
+        targets = [id for d in group if d["target"] is not None
+                   if (id := target(d, f"{what} target {d['target']['number']}")) is not None]
+        if f is None and not targets:
+            continue
+        letters[name] = f"datum/{name}"
+        datums.append({"id": letters[name], "value": {"feature": f, "label": name, "targets": targets}})
 
     dimensions = []
     for d in found["dimensions"]:
@@ -113,12 +181,15 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
             continue
         if d["basic"]:
             tolerance: Any = "basic"
+        elif "fit" in d:
+            tolerance = _fit(d)
         elif "tolerance" in d:
             tolerance = {"deviations": {"lower": _length(d["tolerance"]["lower"]),
                                         "upper": _length(d["tolerance"]["upper"])}}
         else:
             tolerance = "none"
-        dimensions.append({"id": d.get("name") or d["id"], "value": {
+        owners[d["id"]] = ("dimension", ids[d["id"]])
+        dimensions.append({"id": ids[d["id"]], "value": {
             "kind": kind, "modifiers": [], "nominal": _length(d["value"]), "principle": None,
             "qualifier": None, "tolerance": tolerance}})
 
@@ -128,30 +199,53 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         if t["type"] not in TOLERANCE or t["zone"] not in ZONE or t["material"] not in MATERIAL or t["modifiers"]:
             unmapped.append(f"{what}: type, zone or modifiers not mapped yet")
             continue
-        if any(letter not in letters for letter in t["datums"]):
+        # A datum's targets are each a datum of its name in OCCT: each name is one reference.
+        refs = list(dict.fromkeys(t["datums"]))
+        if any(letter not in letters for letter in refs):
             unmapped.append(f"{what}: names a datum not mapped")
             continue
         f = feature(t["faces"], what)
         if f is None:
             continue
+        owners[t["id"]] = ("tolerance", ids[t["id"]])
         form = ZONE[t["zone"]]
         material = MATERIAL[t["material"]]
-        tolerances.append({"id": t.get("name") or t["id"], "value": {
+        tolerances.append({"id": ids[t["id"]], "value": {
             "auxiliary": [],
             "datums": [{"modifiers": [], "references": [{"datum": letters[x], "modifiers": []}]}
-                       for x in t["datums"]] or None,
+                       for x in refs] or None,
             "description": None, "kind": TOLERANCE[t["type"]], "magnitude": _length(t["value"]),
             "maximum": None, "modifiers": [material] if material else [], "target": {"feature": f},
             "unequal": None, "unit_basis": None,
             "zone": None if form is None else {"affected_plane": None, "affected_plane_kind": None, "form": form,
                                                "non_uniform": None, "projected": None, "runout_angle": None}}})
 
-    notes = [{"id": n.get("name") or n["id"],
-              "value": {"kind": "semantic text", "text": n["text"], "on": None, "callouts": []}}
-             for n in found.get("notes", [])]
+    notes = []
+    for n in found.get("notes", []):
+        what = f"note {n.get('name') or n['id']}"
+        on, rest = None, []
+        faces_on = [ref for item in n["on"] if "faces" in item for ref in item["faces"]]
+        if faces_on and (f := feature(faces_on, what)) is not None:
+            on = {"feature": f}
+        for item in n["on"]:
+            if "faces" in item:
+                continue
+            (kind, entry), = item.items()
+            if kind == "part":
+                if len(n["on"]) > 1:
+                    rest.append(f"part {entry}")
+            elif on is None and entry in owners:
+                on = {owners[entry][0]: owners[entry][1]}
+            else:
+                rest.append(f"{kind} {owners[entry][1] if entry in owners else entry}")
+        if rest:
+            owner = "the part" if on is None else " ".join(*on.items())
+            unmapped.append(f"{what}: also on {', '.join(rest)} (a note has one owner, here {owner})")
+        notes.append({"id": ids[n["id"]],
+                      "value": {"kind": "semantic text", "text": n["text"], "on": on, "callouts": []}})
 
     pmi = {
-        "standards": [], "decimal_places": None, "features": features, "datum_targets": [],
+        "standards": [], "decimal_places": None, "features": features, "datum_targets": datum_targets,
         "datums": datums, "dimensions": dimensions, "tolerances": tolerances, "tolerance_relations": [],
         "general": [], "threads": [], "knurls": [], "holes": [], "material": None, "notes": notes,
         "surface_textures": [], "attributes": [], "geometry": [], "derived_geometry": [],
