@@ -375,7 +375,7 @@ def placed(step, part: int | None = None) -> dict[str, Any]:
     from pathlib import Path
 
     text = Path(step).read_bytes()
-    short = re.sub(rb"'(?:[^']|'')*'", lambda m: b"''" if len(m.group(0)) > 20000 else m.group(0), text)
+    short = re.sub(rb"'(?:[^']|'')*'", lambda m: b"''" if len(m.group(0)) > 8000 else m.group(0), text)
     if short != text:
         step = Path(tempfile.mkdtemp()) / "geometry.step"
         step.write_bytes(short)
@@ -410,18 +410,68 @@ def placed(step, part: int | None = None) -> dict[str, Any]:
                               if m not in seen), key=json.dumps)}
 
     units = {u["id"]: u["value"] for listed in document["units"].values() for u in listed}
+    # A datum by its letter, a target by its letter and number; a number by its value.
+    letters = {d["id"]: d["value"]["label"] for d in document["pmi"]["datums"]}
+    letters |= {t: f"{d['value']['label']}{n['value']['number']}" for d in document["pmi"]["datums"]
+                for t in d["value"]["targets"] for n in document["pmi"]["datum_targets"] if n["id"] == t}
 
-    def resolved(value):
+    def number(text):
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    def resolved(value, key=None):
         if isinstance(value, str):
-            return where(value) if value in features else units.get(value, value)
+            if number(value) is not None and key in ("value", None):
+                return repr(round(number(value), 9) + 0.0)
+            return where(value) if value in features else letters.get(value, units.get(value, value))
         if isinstance(value, list):
             return [resolved(v) for v in value]
         if isinstance(value, dict):
-            return {k: resolved(v) for k, v in value.items()}
+            if set(value) == {"unit", "value"} and units.get(value["unit"]) in _MM and number(value["value"]) is not None:
+                # A length in millimetres, whatever unit the file states it in.
+                return {"unit": "millimetre",
+                        "value": repr(round(number(value["value"]) * _MM[units[value["unit"]]], 6) + 0.0)}
+            return {k: resolved(v, k) for k, v in value.items() if k != "id"}
         return value
 
-    return {group: [resolved(x) for x in listed] if isinstance(listed, list) else resolved(listed)
+    # Each item keeps its id beside it ("id"), to name it; compare items without it.
+    return {group: [{**resolved(x), "id": x.get("id")} if isinstance(x, dict) else x for x in listed]
+            if isinstance(listed, list) else resolved(listed)
             for group, listed in document["pmi"].items() if group not in ("features", "geometry")}
+
+
+def placed_all(step) -> dict[str, list]:
+    """``placed`` of every part of a STEP, together."""
+    from xcaf_pmi.from_step import _parts
+
+    n = len(_parts(step))
+    out: dict[str, list] = {}
+    for i in range(n):
+        for group, listed in placed(step, i if n > 1 else None).items():
+            if isinstance(listed, list):
+                out.setdefault(group, []).extend(listed)
+    return out
+
+
+def lost(before: dict[str, list], after: dict[str, list]) -> tuple[list, list]:
+    """What ``before`` states that ``after`` does not, as (group, id), and what ``after`` states
+    that ``before`` does not: items compared by their content and place, not their ids."""
+    import json
+
+    text = lambda x: json.dumps({k: v for k, v in x.items() if k != "id"} if isinstance(x, dict) else x, sort_keys=True)
+    gone, more = [], []
+    for group in sorted(set(before) | set(after)):
+        left = [(text(x), x) for x in after.get(group, [])]
+        for x in before.get(group, []):
+            at = next((i for i, (t, _) in enumerate(left) if t == text(x)), None)
+            if at is None:
+                gone.append((group, x.get("id") if isinstance(x, dict) else None))
+            else:
+                del left[at]
+        more += [(group, x.get("id") if isinstance(x, dict) else None) for _, x in left]
+    return gone, more
 
 
 def occt_step(xbf) -> bytes:

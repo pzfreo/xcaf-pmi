@@ -227,8 +227,11 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         f = feature(on, what) if on else None
         if on and f is None:
             continue
-        targets = [id for d in group if d["target"] is not None
-                   if (id := target(d, f"{what} target {d['target']['number']}")) is not None]
+        # A target once for each number: a tolerance's reference to a datum of targets is a datum
+        # for each target (as OCCT's reader and to_xcaf make them), the same target again.
+        numbers = list(dict.fromkeys(d["target"]["number"] for d in group if d["target"] is not None))
+        firsts = [next(d for d in group if d["target"] is not None and d["target"]["number"] == n) for n in numbers]
+        targets = [id for d in firsts if (id := target(d, f"{what} target {d['target']['number']}")) is not None]
         if f is None and not targets:
             unmapped.append(f"{what}: neither on faces nor of targets (haecceity's writer needs one)")
             continue
@@ -262,7 +265,10 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
                     unmapped.append(f"{held['group']} {item['id']}: kept twice by to_xcaf; the second left out")
                     continue
                 group = into[held["group"]]
-                at = next((i for i, x in enumerate(group) if x["id"] == item["id"]), None)
+                # The fresh reading of the item is the one of its id, or of its label's (an item
+                # whose name another shares has its entry as its id).
+                same = {item["id"], ids.get(fragment.get("on"))}
+                at = next((i for i, x in enumerate(group) if x["id"] in same), None)
                 if at is None:
                     group.append(item)
                 else:
@@ -373,8 +379,12 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         if any(r not in letters for r in t["datums"]):
             unmapped.append(f"{what}: names a datum not mapped")
             continue
-        f = feature(t["faces"], what)
-        if f is None:
+        # A tolerance on the part's own label is on every face of it, as XCAF reads it: the
+        # whole part.
+        whole = len(t["faces"]) == len(faces) > 0 and {r.get("face") for r in t["faces"] if r.get("part") == part} == \
+            set(range(len(faces)))
+        f = None if whole else feature(t["faces"], what)
+        if f is None and not whole:
             continue
         if "All_Around" in named_mods:
             around = f"feature/{len(features)}"
@@ -394,7 +404,7 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
             "description": None, "kind": TOLERANCE[t["type"]], "magnitude": _length(t["value"]),
             "maximum": _length(t["maximum"]) if t.get("maximum") else None,
             "modifiers": ([material] if material else []) + [TOLERANCE_MODIFIER[m] for m in named_mods if m in TOLERANCE_MODIFIER],
-            "target": {"feature": f}, "unequal": None, "unit_basis": None, "zone": zone}})
+            "target": "whole_part" if whole else {"feature": f}, "unequal": None, "unit_basis": None, "zone": zone}})
 
     notes = []
     for n in found.get("notes", []):
@@ -432,6 +442,14 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
               "general": [], "threads": [], "knurls": [], "holes": [], "surface_textures": [],
               "tolerance_relations": [], "derived_geometry": []}
     restore(tuple(groups), groups)
+    # A restored tolerance on a datum this part has not (one of another part's faces) cannot be
+    # written on this part: left out, and said so.
+    have = {d["id"] for d in datums}
+    for t in list(groups["tolerances"]):
+        refs = {r["datum"] for c in t["value"].get("datums") or [] for r in c["references"]}
+        if t["id"] in restored and not refs <= have:
+            groups["tolerances"].remove(t)
+            unmapped.append(f"tolerance {t['id']}: on {', '.join(sorted(refs - have))}, not a datum of this part; left out")
     standards, decimal_places, units_kept, geometry = [], None, [], []
     for fragment in kept:
         units_kept.append(fragment["units"])

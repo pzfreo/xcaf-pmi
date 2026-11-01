@@ -302,31 +302,51 @@ def test_an_item_haecceity_does_not_read_is_taken_from_occt(tmp_path):
     assert len(position) == 1 and position[0]["datums"] == ["A", "B", "C"] and position[0]["faces"]
 
 
-# What the round trip loses, by category, and why: haecceity's writer refuses a dimension with
-# no value; XCAF does not hold where a projected zone ends, which AP242 requires.
+# What the round trip loses, by (group, id), and why. Each loss is reported. (Files of several
+# parts, as OCCT reads them, need to_step to write every part: #9.)
 ROUND_TRIP = {
-    CTC01: {"dimensions": 4, "dimension tolerances": 4},
-    "nist_ftc_07_asme1_ap242-e2.stp": {"modifiers": 4},
-    "nist_stc_10_asme1_ap242-e2.stp": {},
-    "spool_fits.step": {},
-    "bracket_positions.step": {},
-    "spindle_shaft_fit.step": {},
+    # four dimensions with no value, which haecceity's writer refuses
+    'nist_ctc_01_asme1_ap242-e1.stp': ([('dimensions', 'dimensions:7339132ab1823a7c7b57f271eaf92b04'), ('dimensions', 'dimensions:7e6b0dacc5816379b10f42acf645d456'), ('dimensions', 'dimensions:8c3976184b1ca43cf6adf429cece06af'), ('dimensions', 'dimensions:cc5441532147f34dbe667ce9d4d02e43')],
+        []),
+    # an attribute on an edge whose number haecceity gives cannot be checked
+    'nist_stc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:a7d09f16d6a43f38a22c233c203ade51')],
+        []),
+    # nothing
+    'spool_fits.step': ([],
+        []),
+    # the attributes restating a thread (WR2), which haecceity's writer refuses
+    'thumbwheel_thread_knurl.step': ([('attributes', 'attributes:5e823f1a4cc8cafef8960a6fdfc8ebd8'), ('attributes', 'attributes:de3da2964668f81a756c907f9760d7c9'), ('attributes', 'attributes:fa914e4d0d3537bccec2156d1d13a77d')],
+        []),
+    # the attributes restating a thread (WR2)
+    'bolt_thread_knurl.step': ([('attributes', 'attributes:4a3fb05f9dcfe19cc83e799f61773015'), ('attributes', 'attributes:a951fd332521b26ac9bb825df6dbc5b3')],
+        []),
+    # nothing
+    'bracket_positions.step': ([],
+        []),
+    # the attribute restating a thread (WR2)
+    'string_post_tapped.step': ([('attributes', 'attributes:713643f781acb2f312e6213a9c442184')],
+        []),
+    # nothing
+    'spindle_shaft_fit.step': ([],
+        []),
 }
 
 
 @pytest.mark.parametrize("name", ROUND_TRIP)
 def test_round_trip(name, tmp_path):
-    """to_step(to_xcaf(step)) keeps the PMI: haecceity reads back what it wrote (no
-    differences), and what it reads is what the STEP stated, but for the losses listed."""
+    """to_step(to_xcaf(step)) keeps the PMI, compared by content and the faces and edges each item
+    is on (``gaps.placed``), not by ids: haecceity reads back what it wrote (no differences),
+    what is lost is exactly what is listed, and every loss is reported."""
     step = files.step(name)
-    before = pmi.read(step)
-    xbf = save(to_xcaf(step), tmp_path / "part.xbf")
+    doc, made = to_xcaf(step, report=True)
+    xbf = save(doc, tmp_path / "part.xbf")
     written, report = to_step(xbf, report=True)
     assert report["quiddity"]["differences"] == []
-    after = pmi.read(written, part=report["quiddity"]["part"] if len(_parts_of(written, tmp_path)) > 1 else None)
-    stated, read_back = gaps.haecceity_facts(before), gaps.haecceity_facts(after)
-    lost = {key: len(gaps.missed(stated, read_back, key)) for key, _ in gaps.CATEGORIES}
-    assert {k: n for k, n in lost.items() if n} == ROUND_TRIP[name]
+    (tmp_path / "written.step").write_bytes(written)
+    gone, more = gaps.lost(gaps.placed_all(step), gaps.placed_all(tmp_path / "written.step"))
+    assert (sorted(gone), more) == (sorted(ROUND_TRIP[name][0]), ROUND_TRIP[name][1])
+    said = "\n".join(made["unmapped"] + report["unmapped"])
+    assert [id for _, id in gone if id not in said] == []
 
 
 def _parts_of(written: bytes, tmp_path):

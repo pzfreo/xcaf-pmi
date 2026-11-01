@@ -266,6 +266,11 @@ class _Builder:
         found, missing = self.anchors(feature)
         for line in missing:
             self.lose(f"{what}: {line}" + ("; kept unanchored" if not found else ""))
+        value = self.features.get(feature) or {}
+        if "derived" in value or ("group" in value and value["group"]["kind"] != "all_around_shape_aspect"):
+            # XCAF holds the faces alone, not the pattern, group or derived feature they make.
+            kind = value["group"]["kind"] if "group" in value else "derived feature"
+            self.lose(f"{what}: on a {kind}, which XCAF holds as its faces alone; kept for to_step")
         if not found and not missing:
             self.lose(f"{what}: feature {feature} has no faces; kept unanchored")
         return [self.sub_label(kind, i) for kind, i in found]
@@ -380,6 +385,9 @@ class _Builder:
             for line in missing:
                 if not line.startswith("geometry "):
                     self.lose(f"{what}: {line}")
+            if any(line.startswith("geometry ") for line in missing):
+                self.lose(f"{what}: on supplemental geometry, which XCAF holds only as the target's placement; "
+                          "kept for to_step")
             faces = [self.sub_label(k, i) for k, i in found]
             if kind == "area" and not faces:
                 self.lose(f"{what}: its area has no faces")
@@ -461,6 +469,7 @@ class _Builder:
                 obj.SetModifiers(modifiers)
             if d["principle"] is not None:
                 self.lose(f"{what}: {d['principle']} has no XCAF form")
+            self.places(d, what)
             self.present(obj, id)
             label = self.dimtol.AddDimension()
             XCAFDoc_Dimension.Set_s(label).SetObject(obj)
@@ -469,6 +478,13 @@ class _Builder:
             self.labels[id] = label
             self.datum_faces[id] = first
             self.count("dimension")
+
+    def places(self, value, what: str) -> None:
+        """The decimal places a value is stated to, which XCAF's items do not hold: the item is
+        kept whole for to_step."""
+        if '"decimal_places": ' in json.dumps(value) and any(
+                v is not None for v in _all(value, "decimal_places")):
+            self.lose(f"{what}: the decimal places of its values have no XCAF form here; kept for to_step")
 
     def dimension_tolerance(self, obj, tolerance, nominal: float | None, what: str) -> None:
         if tolerance == "basic":
@@ -553,6 +569,7 @@ class _Builder:
                                ("description", "description")):
                 if t[key] is not None:
                     self.lose(f"{what}: its {words} has no XCAF form")
+            self.places(t, what)
             self.present(obj, id)
             label = self.dimtol.AddGeomTolerance()
             XCAFDoc_GeomTolerance.Set_s(label).SetObject(obj)
@@ -571,6 +588,8 @@ class _Builder:
         if zone["projected"] is not None:
             obj.SetZoneModifier(ZoneModif.XCAFDimTolObjects_GeomToleranceZoneModif_Projected)
             obj.SetValueOfZoneModifier(self.units.value(zone["projected"]["length"]) or 0.0)
+            if zone["projected"].get("end") is not None:
+                self.lose(f"{what}: where its projected zone ends has no XCAF form; kept for to_step")
         elif zone["runout_angle"] is not None:
             obj.SetZoneModifier(ZoneModif.XCAFDimTolObjects_GeomToleranceZoneModif_Runout)
             obj.SetValueOfZoneModifier(self.units.value(zone["runout_angle"]) or 0.0)
@@ -622,6 +641,9 @@ class _Builder:
             TDataStd_Name.Set_s(note, TCollection_ExtendedString(item["id"], True))
             self.note_labels[item["id"]] = note
             self.count("note")
+            if n.get("kind", "semantic text") != "semantic text" or n.get("callouts"):
+                # XCAF's comment holds the text alone: the note is kept whole for to_step.
+                self.lose(f"{what}: its kind ({n.get('kind')}) and callouts have no XCAF form; kept for to_step")
             if on is None:
                 notes.AddNote(note, self.part)
             elif "feature" in on:
@@ -832,6 +854,18 @@ def _closure(text: str, features: dict, geometry: dict) -> list[str]:
             inner = json.dumps(features[id]["value"])
             todo += [i for i in list(features) + list(geometry) if i not in found and json.dumps(i) in inner]
     return found
+
+
+def _all(value, key: str):
+    """Every value of ``key`` in a JSON value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == key:
+                yield v
+            yield from _all(v, key)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _all(v, key)
 
 
 def _renamed(value, names: dict[str, str]):
