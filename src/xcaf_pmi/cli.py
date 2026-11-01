@@ -47,7 +47,7 @@ _TO_STEP = (".xbf", ".xml")
 _TO_XCAF = (".step", ".stp")
 
 
-_VALUED = {"-o", "--output", "--part", "--step", "--haecceity", "--json"}
+_VALUED = {"-o", "--output", "--part", "--step", "--haecceity", "--json", "--presentation"}
 
 
 def _input(argv: list[str]) -> str | None:
@@ -122,14 +122,18 @@ def to_step_main(argv: list[str]) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("document", help="an XCAF document: .xbf (BinXCAF) or .xml (XmlXCAF)")
     parser.add_argument("-o", "--output", help="the AP242 STEP to write, with semantic PMI")
-    parser.add_argument("--part", type=_part, default=0, help="the part whose GD&T is carried over (default 0)")
+    parser.add_argument("--part", type=_part, help="only this part's GD&T (default: every part's)")
     parser.add_argument("--strict", action="store_true", help="fail, writing nothing, if any GD&T is not carried over")
     parser.add_argument("--step", help="advanced: also write the geometry alone as AP242 STEP, without PMI")
     parser.add_argument("--haecceity", help="advanced: also write the PMI as haecceity.pmi/1 JSON (faces named as in --step)")
+    parser.add_argument("--presentation", help="advanced: also write the document's own callouts and saved views "
+                        "as haecceity.presentation/1 JSON")
     parser.add_argument("--json", help="advanced: also write the GD&T as read, in OCCT's terms ('-' for stdout)")
     args = parser.parse_args(argv)
     if not (args.output or args.step or args.haecceity or args.json):
         parser.error("nothing to write: give -o PART.step (or --step, --haecceity, --json)")
+    if args.presentation and not args.output:
+        parser.error("--presentation is the document's own callouts of the STEP written: give -o PART.step too")
     try:
         problems: list[str] = []
         if args.output:
@@ -137,6 +141,8 @@ def to_step_main(argv: list[str]) -> int:
             with open(args.output, "wb") as out:
                 out.write(written)
             problems = report["unmapped"]
+            if args.presentation:
+                _write_json(args.presentation, report["presentation"])
             details = report["quiddity"]
             for difference in details["differences"]:
                 print(f"xcaf-pmi: read back differently: {difference}", file=sys.stderr)
@@ -151,7 +157,7 @@ def to_step_main(argv: list[str]) -> int:
             if args.json:
                 _write_json(args.json, found)
             if args.haecceity:
-                mapped = to_haecceity(found, args.part)
+                mapped = to_haecceity(found, args.part or 0)
                 _write_json(args.haecceity, mapped["document"])
                 problems = problems or mapped["unmapped"]
             elif not args.output:

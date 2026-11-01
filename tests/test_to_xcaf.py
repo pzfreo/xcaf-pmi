@@ -302,12 +302,21 @@ def test_an_item_haecceity_does_not_read_is_taken_from_occt(tmp_path):
     assert len(position) == 1 and position[0]["datums"] == ["A", "B", "C"] and position[0]["faces"]
 
 
-# What the round trip loses, by (group, id), and why. Each loss is reported. (Files of several
-# parts, as OCCT reads them, need to_step to write every part: #9.)
+# What the round trip loses, by (group, id), and why; and what it then has instead (FTC-10's
+# items on the surfaces beside its solid, as the document holds them). Each loss is reported.
 ROUND_TRIP = {
     # four dimensions with no value, which haecceity's writer refuses
     'nist_ctc_01_asme1_ap242-e1.stp': ([('dimensions', 'dimensions:7339132ab1823a7c7b57f271eaf92b04'), ('dimensions', 'dimensions:7e6b0dacc5816379b10f42acf645d456'), ('dimensions', 'dimensions:8c3976184b1ca43cf6adf429cece06af'), ('dimensions', 'dimensions:cc5441532147f34dbe667ce9d4d02e43')],
         []),
+    # an attribute haecceity's writer refuses (a unit it cannot state), and a tolerance on datum K, which lies on a surface OCCT reads beside the solid
+    'nist_ctc_02_asme1_ap242-e2.stp': ([('attributes', 'attributes:aecadfb1293b4204b061b82510cb19dd'), ('tolerances', 'tolerances:58ff36f23e70211d824e926e9fe1503a')],
+        []),
+    # attributes haecceity's writer refuses (units it cannot state)
+    'nist_ftc_07_asme1_ap242-e2.stp': ([('attributes', 'attributes:16c8ee821989f4018740cf6c2c696b9c'), ('attributes', 'attributes:28d714d9b8527952cc2274cb801f79d6'), ('attributes', 'attributes:35f4e80133fa741401fa24cfd9d08c6a'), ('attributes', 'attributes:3b2dd830acd1e27329fc9c9436c57581'), ('attributes', 'attributes:4aa5c25aef1efb86935a6b2962f806fe'), ('attributes', 'attributes:51585c436d670c2cddb69dec38d55882'), ('attributes', 'attributes:7d0fa79242281dcf207ca85be9a42c88'), ('attributes', 'attributes:8062abfaec269f037ae95254d064935e'), ('attributes', 'attributes:8639d6d1c19d6f0274d2158b02dea319'), ('attributes', 'attributes:97f7dde1dbd2eb21f6881166259e0025'), ('attributes', 'attributes:9eea3f7f11415fc54c9e5b887c180305'), ('attributes', 'attributes:c4a6d6a18907acc6b5ba0c9d5c774939'), ('attributes', 'attributes:e76dd223d9808de4289c500c5b53e999')],
+        []),
+    # attributes haecceity's writer refuses, and items on the surfaces OCCT reads beside the solid (written as the document has them, without what XCAF cannot hold)
+    'nist_ftc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:16c8ee821989f4018740cf6c2c696b9c'), ('attributes', 'attributes:28d714d9b8527952cc2274cb801f79d6'), ('attributes', 'attributes:35f4e80133fa741401fa24cfd9d08c6a'), ('attributes', 'attributes:3b2dd830acd1e27329fc9c9436c57581'), ('attributes', 'attributes:4aa5c25aef1efb86935a6b2962f806fe'), ('attributes', 'attributes:4ffa3928397b1541f4c72454e59c4ee3'), ('attributes', 'attributes:51585c436d670c2cddb69dec38d55882'), ('attributes', 'attributes:6a2950652734e8543cdef501434250af'), ('attributes', 'attributes:7d0fa79242281dcf207ca85be9a42c88'), ('attributes', 'attributes:8062abfaec269f037ae95254d064935e'), ('attributes', 'attributes:8639d6d1c19d6f0274d2158b02dea319'), ('attributes', 'attributes:97f7dde1dbd2eb21f6881166259e0025'), ('attributes', 'attributes:9eea3f7f11415fc54c9e5b887c180305'), ('attributes', 'attributes:c4a6d6a18907acc6b5ba0c9d5c774939'), ('attributes', 'attributes:d3a59ed7ecccfe08a8c293e79002ce6e'), ('attributes', 'attributes:e76dd223d9808de4289c500c5b53e999'), ('attributes', 'attributes:fa688aa6fb140054afc228ea57706fbb'), ('datums', 'datums:23a72171b7511071cdba94e23b7dfe92'), ('datums', 'datums:787c03929b1d2ee2a32665068c119bf2'), ('dimensions', 'dimensions:0ecbd61f628ef7182429af794ece4604'), ('dimensions', 'dimensions:4485baf1674fa66afa9cd9cb4bdca601'), ('dimensions', 'dimensions:47190a2ce999413195414ce144d430e1'), ('dimensions', 'dimensions:ba2159ab649f7943d2bf43a9a7e6631b'), ('dimensions', 'dimensions:d26c2fc7e474f5221212a2ca3cbae6f1'), ('dimensions', 'dimensions:fd6cd4517348a71c3c15256914acf3e1'), ('tolerances', 'tolerances:39ad7cc323fd3f5a3cfb9adcaebc75d9'), ('tolerances', 'tolerances:678c3a33e83446ea84783d6cdfe2ec1a'), ('tolerances', 'tolerances:8d94999a56170ad214f6e98cbd2cfb0d'), ('tolerances', 'tolerances:cdc00e5af5bea8d4c3b4dd5daa7e86ed'), ('tolerances', 'tolerances:f4899251f862eb253dc80ad58805fcd4')],
+        [('datums', 'datum/K'), ('datums', 'datum/L'), ('dimensions', 'dimensions:4485baf1674fa66afa9cd9cb4bdca601'), ('dimensions', 'dimensions:ba2159ab649f7943d2bf43a9a7e6631b')]),
     # an attribute on an edge whose number haecceity gives cannot be checked
     'nist_stc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:a7d09f16d6a43f38a22c233c203ade51')],
         []),
@@ -325,6 +334,9 @@ ROUND_TRIP = {
         []),
     # the attribute restating a thread (WR2)
     'string_post_tapped.step': ([('attributes', 'attributes:713643f781acb2f312e6213a9c442184')],
+        []),
+    # the attributes restating a thread (WR2)
+    'assembly_plate_pin.step': ([('attributes', 'attributes:6ca5e4b08c8d515d02aac9152f68a65d'), ('attributes', 'attributes:b8b06fa42ccea0a09389483efcb74f88')],
         []),
     # nothing
     'spindle_shaft_fit.step': ([],
@@ -374,16 +386,11 @@ def test_round_trip_keeps_what_xcaf_cannot_hold(name, tmp_path):
     written.write_bytes(to_step(xbf))
     after = gaps.placed(written)
     assert any(before[k] for k in EXTRA)
+    gone, more = gaps.lost({k: before[k] for k in EXTRA}, {k: after[k] for k in EXTRA})
+    assert more == []
     lost = {}
-    for key in EXTRA:
-        left = [json.dumps(x, sort_keys=True) for x in after[key]]
-        for x in before[key]:
-            text = json.dumps(x, sort_keys=True)
-            if text in left:
-                left.remove(text)
-            else:
-                lost[key] = lost.get(key, 0) + 1
-        assert left == [], key
+    for key, _ in gone:
+        lost[key] = lost.get(key, 0) + 1
     assert lost == KEPT_LOST[name]
     if lost:
         assert any("left unanchored" in line and line.startswith("edge ") for line in report["unmapped"])

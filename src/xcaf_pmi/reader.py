@@ -123,6 +123,7 @@ class _Faces:
         self.labels: dict[str, int] = {}
         self._where: dict[int, tuple[int, list[int]]] = {}
         self._edges: dict[str, tuple[int, int]] = {}
+        self._maps: list = []
         self._edge_maps: list = []
         # Each part is a top-level shape that is not an assembly: an assembly's instances refer to
         # these prototypes, and GD&T is linked to the prototype's own sub-shape labels (cadgen
@@ -150,7 +151,22 @@ class _Faces:
                     # An edge, by its index in the part's map of edges.
                     self._edges[_key(sub)] = (p, edge - 1)
             self._where[_key(label)] = (p, list(range(faces.Extent())))
+            self._maps.append(faces)
             self.labels[_key(label)] = p
+
+    def of_shape(self, shape) -> list[dict[str, Any]]:
+        """The parts' faces a shape is made of (an area datum target's shape, say)."""
+        found = ShapeMap()
+        TopExp.MapShapes_s(shape, TopAbs_FACE, found)
+        out = []
+        for i in range(1, found.Extent() + 1):
+            for p, faces in enumerate(self._maps):
+                if index := faces.FindIndex(found.FindKey(i)):
+                    out.append(self.ref(p, index - 1))
+                    break
+            else:
+                out.append({"unresolved": "a face of the target's shape"})
+        return out
 
     def fingerprint(self, part: int, kind: str, index: int) -> dict[str, Any] | None:
         """What identifies a part's face (its surface, area and centre) or edge (its curve, length
@@ -209,6 +225,62 @@ def _material(label) -> dict[str, Any] | None:
         "density": density if density > 0 else None,
         "density_unit": "g/cm3",
     }
+
+
+def _presentation(obj) -> dict[str, Any] | None:
+    """An item's drawn callout as XCAF holds it: its shape (as polylines and triangles), its name,
+    its annotation plane and where its text is placed."""
+    shape = obj.GetPresentation()
+    plane = obj.GetPlane() if obj.HasPlane() else None
+    has_text = obj.HasTextPoint() if hasattr(obj, "HasTextPoint") else obj.HasPointText()
+    if (shape is None or shape.IsNull()) and plane is None and not has_text:
+        return None
+    out: dict[str, Any] = {"name": _text(obj.GetPresentationName()) or "", "polylines": [], "triangles": []}
+    if shape is not None and not shape.IsNull():
+        out["polylines"], out["triangles"] = _drawn(shape)
+    if plane is not None:
+        out["plane"] = {"origin": _xyz(plane.Location()), "normal": _xyz(plane.Direction()),
+                        "x_axis": _xyz(plane.XDirection())}
+    if has_text:
+        out["text_point"] = _xyz(obj.GetPointTextAttach())
+    return out
+
+
+def _drawn(shape) -> tuple[list, list]:
+    """A presentation shape's edges as polylines and its faces as triangles."""
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.GCPnts import GCPnts_QuasiUniformDeflection
+    from OCP.TopAbs import TopAbs_EDGE as EDGE
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopLoc import TopLoc_Location
+
+    polylines, triangles = [], []
+    explorer = TopExp_Explorer(shape, TopAbs_FACE)
+    meshed = False
+    while explorer.More():
+        if not meshed:
+            BRepMesh_IncrementalMesh(shape, 0.01)
+            meshed = True
+        face = TopoDS.Face(explorer.Current())
+        where = TopLoc_Location()
+        mesh = BRep_Tool.Triangulation_s(face, where)
+        if mesh is not None:
+            moved = where.Transformation()
+            nodes = [mesh.Node(i).Transformed(moved) for i in range(1, mesh.NbNodes() + 1)]
+            for t in range(1, mesh.NbTriangles() + 1):
+                a, b, c = mesh.Triangle(t).Get()
+                triangles.append([_xyz(nodes[a - 1]), _xyz(nodes[b - 1]), _xyz(nodes[c - 1])])
+        explorer.Next()
+    explorer = TopExp_Explorer(shape, EDGE, TopAbs_FACE)
+    while explorer.More():
+        curve = BRepAdaptor_Curve(TopoDS.Edge(explorer.Current()))
+        points = GCPnts_QuasiUniformDeflection(curve, 0.01)
+        if points.IsDone() and points.NbPoints() >= 2:
+            polylines.append([_xyz(points.Value(i)) for i in range(1, points.NbPoints() + 1)])
+        explorer.Next()
+    return polylines, triangles
 
 
 def _key(label) -> str:
@@ -272,6 +344,10 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
                 target |= {"length": obj.GetDatumTargetLength(), "width": obj.GetDatumTargetWidth(),
                            "origin": _xyz(axis.Location()), "axis": _xyz(axis.Direction()),
                            "x": _xyz(axis.XDirection())}
+            # An area target's area is its shape in XCAF (OCCT's reader and writer keep it so).
+            area = obj.GetDatumTarget()
+            if area is not None and not area.IsNull():
+                target["area"] = faces.of_shape(area)
         datums.append({
             "id": _entry(label),
             "name": _text(obj.GetName()),
@@ -280,6 +356,7 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
             "position": obj.GetPosition(),
             "target": target,
             "faces": first,
+            "presentation": _presentation(obj),
         })
     by_entry = {d["id"]: d["name"] for d in datums}
     datum_of = {d["id"]: d for d in datums}
@@ -325,6 +402,7 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
             item["qualifier"] = _enum(obj.GetQualifier())
         if obj.HasAngularQualifier():
             item["angle"] = _enum(obj.GetAngularQualifier()).removeprefix("XCAFDimTolObjects_AngularQualifier_")
+        item["presentation"] = _presentation(obj)
         dimensions.append(item)
 
     tolerances = []
@@ -353,6 +431,7 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
                             "modifiers": datum_of[_entry(r)]["modifiers"] if _entry(r) in datum_of else []}
                            for r in refs],
             "faces": first,
+            "presentation": _presentation(obj),
         })
 
     names = {item["id"]: item.get("name") for group in (datums, dimensions, tolerances) for item in group}
@@ -432,6 +511,7 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
                 "direction": [direction.X(), direction.Y(), direction.Z()],
                 "up": [up.X(), up.Y(), up.Z()],
                 "shows": [names.get(_entry(g)) or _entry(g) for g in shown],
+                "shows_entries": [_entry(g) for g in shown],
                 "notes": [_name(n) or _entry(n) for n in _labels(lambda seq, l=label: view_tool.GetRefNoteLabel(l, seq))],
                 "clipped": bool(_labels(lambda seq, l=label: view_tool.GetRefClippingPlaneLabel(l, seq))),
             })
