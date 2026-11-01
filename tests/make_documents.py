@@ -172,10 +172,18 @@ def build_modifiers(path: Path) -> Path:
     return d.save(path)
 
 
-def build_two_parts(path: Path) -> Path:
+def build_two_parts(path: Path, empty_first: bool = False) -> Path:
     """A plate and a pin, two parts of one document, each with its datum, dimension and
-    tolerance."""
+    tolerance; with ``empty_first``, after an empty compound (a shape of no faces, as OCCT's
+    reader makes for some STEPs)."""
     d = _Document()
+    if empty_first:
+        from OCP.BRep import BRep_Builder
+        from OCP.TopoDS import TopoDS_Compound
+
+        empty = TopoDS_Compound()
+        BRep_Builder().MakeCompound(empty)
+        d.part(empty, "empty")
     plate = _plate()
     pin_shape = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 4, 20).Shape()
     move = gp_Trsf()

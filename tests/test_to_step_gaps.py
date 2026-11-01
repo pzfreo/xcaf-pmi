@@ -9,7 +9,7 @@ from quiddity import pmi
 import files
 from make_documents import build_modifiers, build_two_parts
 from test_reader import CADGEN
-from xcaf_pmi import read, to_haecceity, to_step, to_xcaf
+from xcaf_pmi import read, save, to_haecceity, to_step, to_xcaf
 from xcaf_pmi.cli import main
 from xcaf_pmi.reader import read_document
 
@@ -113,3 +113,43 @@ def test_two_parts_round_trip(two_parts, tmp_path):
     again = to_step(to_xcaf(step))
     assert [[t["id"] for t in pmi.read(again, part=i)["pmi"]["tolerances"]] for i in (0, 1)] == \
            [["plate-flatness"], ["pin-perpendicularity"]]
+
+
+def test_an_empty_shape_first_moves_no_part(tmp_path):
+    """A shape with no faces before the parts is no part: the parts are numbered as quiddity
+    numbers the STEP's, and each part's GD&T is on its own part."""
+    doc = build_two_parts(tmp_path / "two.xbf", empty_first=True)
+    assert [p["name"] for p in read(doc)["parts"]] == ["plate", "pin"]
+    written, report = to_step(doc, report=True)
+    assert report["unmapped"] == [] and report["quiddity"]["differences"] == []
+    assert [[t["id"] for t in pmi.read(written, part=i)["pmi"]["tolerances"]] for i in (0, 1)] == \
+           [["plate-flatness"], ["pin-perpendicularity"]]
+
+
+def test_datum_targets_on_geometry_alone_stay_on_their_part(tmp_path):
+    """CTC-02's datums of targets placed by geometry alone (no faces) are its solid's, not every
+    part's: the STEP → XCAF → STEP round trip writes them once, on the solid."""
+    xbf = save(to_xcaf(files.step("nist_ctc_02_asme1_ap242-e2.stp")), tmp_path / "part.xbf")
+    found = read(xbf)
+    assert [len(p["faces"]) for p in found["parts"]] == [635, 1, 1]  # not OCCT's empty compound
+    labels = [{d["value"]["label"] for d in to_haecceity(found, i)["document"]["pmi"]["datums"]} for i in range(3)]
+    assert {"A", "B", "C"} <= labels[0] and not {"A", "B", "C"} & (labels[1] | labels[2])
+    written, report = to_step(xbf, report=True)
+    assert report["quiddity"]["differences"] == []
+
+
+def test_a_part_with_only_kept_pmi_is_written(tmp_path):
+    """A part whose only PMI is what to_xcaf kept (a thread, say) is a part with PMI."""
+    from xcaf_pmi.ap242 import _has_pmi
+
+    mapped = {"document": {"pmi": {"features": [{"id": "f"}], "geometry": [], "datums": [], "threads": [{"id": "t"}],
+                                   "material": None, "decimal_places": None}}}
+    assert _has_pmi(mapped)
+    mapped["document"]["pmi"]["threads"] = []
+    assert not _has_pmi(mapped)
+
+
+def test_cli_presentation_needs_the_step(tmp_path):
+    with pytest.raises(SystemExit) as exit:
+        main(["to-step", str(CADGEN), "--step", str(tmp_path / "g.step"), "--presentation", str(tmp_path / "p.json")])
+    assert exit.value.code == 2

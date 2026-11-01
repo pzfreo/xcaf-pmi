@@ -7,10 +7,11 @@ haecceity's face indices to OCCT's. Values are converted to millimetres and degr
 OCCT's reader gives the geometry.
 
 XCAF keeps a datum's modifiers and its place in a datum system on the datum itself. A datum is
-therefore one XCAF datum, on its feature, and tolerances that refer to it plainly share it; a
-reference with modifiers, or two datums in one compartment (A-B), is a datum of its own for that
-tolerance, named as its datum, with its modifiers and its compartment as its position (as OCCT's
-own reader makes them). Each datum target is a datum of its own, named as its datum.
+therefore one XCAF datum, on its feature (with its callout), and each reference to it in a
+tolerance's datum system is a datum of its own for that tolerance, named as its datum, on its
+feature, with the reference's modifiers and its compartment as its position (1, 2, 3 …), as
+OCCT's own reader makes them and its writer needs them. Each datum target is a datum of its own,
+named as its datum; a reference to a datum defined by targets is a datum for each target.
 
 What has no place in XCAF is listed in ``unmapped``, never dropped silently.
 """
@@ -61,8 +62,8 @@ from OCP.XCAFDoc import (
 )
 
 from xcaf_pmi.haecceity import (
-    ANGLE, DATUM_MODIFIER, DATUM_MODIFIER_WITH_VALUE, DIMENSION_MODIFIER, LOCATION, MATERIAL, QUALIFIER, SIZE,
-    TOLERANCE, TOLERANCE_MODIFIER,
+    ANGLE, DATUM_MODIFIER, DATUM_MODIFIER_WITH_VALUE, DIMENSION_MODIFIER, KEPT_SCHEMA, LOCATION, MATERIAL, QUALIFIER,
+    SIZE, TOLERANCE, TOLERANCE_MODIFIER,
 )
 
 # Each table of ``to_haecceity``, the other way round: haecceity's name to OCCT's.
@@ -143,16 +144,18 @@ class _Units:
 
 
 def build(doc, part, document: dict[str, Any], face_map: list[int | None],
-          presentation: dict[str, Any] | None = None) -> dict[str, Any]:
+          presentation: dict[str, Any] | None = None, edge_map: dict[int, int | None] | None = None) -> dict[str, Any]:
     """Add the PMI of ``document`` to ``doc``, on ``part`` (a ``geometry.Part``). ``face_map``
-    gives the OCCT face (index in the part's map of faces) of each haecceity face index.
+    gives the OCCT face (index in the part's map of faces) of each haecceity face index, and
+    ``edge_map`` the OCCT edge of each haecceity edge index (``geometry.edges``; by default each
+    edge is OCCT's of its index).
 
     Returns ``{"unmapped": [...], "added": {kind: count}}``."""
-    return _Builder(doc, part, document, face_map, presentation).run()
+    return _Builder(doc, part, document, face_map, presentation, edge_map).run()
 
 
 class _Builder:
-    def __init__(self, doc, part, document, face_map, presentation):
+    def __init__(self, doc, part, document, face_map, presentation, edge_map=None):
         self.doc, self.topology = doc, part
         # The part's own label: its material, attributes and notes of the whole part.
         self.part = part.home
@@ -162,6 +165,7 @@ class _Builder:
         self.shapes = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
         self.dimtol = XCAFDoc_DocumentTool.DimTolTool_s(doc.Main())
         self.face_map = face_map
+        self.edge_map = edge_map
         self.features = {f["id"]: f["value"] for f in self.pmi["features"]}
         self.presentation = presentation
         self.unmapped: list[str] = []
@@ -169,6 +173,8 @@ class _Builder:
         self.sub_labels: dict[tuple[str, int], Any] = {}
         self.labels: dict[str, Any] = {}  # an item's id to its XCAF label
         self.datum_faces: dict[str, list] = {}  # a datum's id to the labels of its feature's faces
+        # A datum defined by targets alone: its targets, each as (its XCAF object, its faces' labels).
+        self.target_objects: dict[str, list[tuple[Any, list]]] = {}
         self.shown: set[str] = set()  # items whose callouts were carried
         self.current: tuple[str, dict] | None = None  # the item being built: (its group, it)
         self.lossy: dict[str, tuple[str, dict]] = {}
@@ -231,10 +237,11 @@ class _Builder:
                     else:
                         out.append(("face", occt))
                 elif "edge" in item:
-                    if item["edge"] < len(self.topology.edges) and self.topology.edges[item["edge"]][0] is not None:
-                        out.append(("edge", item["edge"]))
+                    occt = self.edge(item["edge"])
+                    if occt is not None and self.topology.edges[occt][0] is not None:
+                        out.append(("edge", occt))
                     else:
-                        missing.append(f"edge {item['edge']} not found")
+                        missing.append(f"edge {item['edge']} not found in OCCT's reading")
                 else:
                     missing.append(f"geometry {item['geometry']} is not part of the shape")
         else:
@@ -245,6 +252,11 @@ class _Builder:
                 missing.extend(gone)
         return list(dict.fromkeys(out)), missing
 
+    def edge(self, index) -> int | None:
+        """OCCT's edge (index in the part's map of edges) of haecceity's edge ``index``."""
+        occt = index if self.edge_map is None else self.edge_map.get(index)
+        return occt if isinstance(occt, int) and 0 <= occt < len(self.topology.edges) else None
+
     def on(self, feature: str | None, what: str) -> list:
         """The labels of a feature's faces and edges. What of it cannot be placed on the part (an
         item of supplemental geometry, a face OCCT did not make) is listed in ``unmapped``; an item
@@ -254,6 +266,11 @@ class _Builder:
         found, missing = self.anchors(feature)
         for line in missing:
             self.lose(f"{what}: {line}" + ("; kept unanchored" if not found else ""))
+        value = self.features.get(feature) or {}
+        if "derived" in value or ("group" in value and value["group"]["kind"] != "all_around_shape_aspect"):
+            # XCAF holds the faces alone, not the pattern, group or derived feature they make.
+            kind = value["group"]["kind"] if "group" in value else "derived feature"
+            self.lose(f"{what}: on a {kind}, which XCAF holds as its faces alone; kept for to_step")
         if not found and not missing:
             self.lose(f"{what}: feature {feature} has no faces; kept unanchored")
         return [self.sub_label(kind, i) for kind, i in found]
@@ -305,6 +322,16 @@ class _Builder:
         obj.SetName(_text(letter))
         if position:
             obj.SetPosition(position)
+        self.modify(obj, modifiers, what)
+        if present:
+            self.present(obj, present)
+        XCAFDoc_Datum.Set_s(label).SetObject(obj)
+        if faces:
+            self.dimtol.SetDatum(_seq(faces), label)
+        return label
+
+    def modify(self, obj, modifiers, what: str) -> None:
+        """A datum reference's modifiers, on its XCAF datum."""
         for modifier in modifiers:
             if "simple" in modifier:
                 name = _DATUM_MODIFIER.get(modifier["simple"])
@@ -316,12 +343,6 @@ class _Builder:
                 kind, value = modifier["with_value"]["kind"], self.units.value(modifier["with_value"]["value"])
                 obj.SetModifierWithValue(_enum(DatumModifWithValue, "XCAFDimTolObjects_DatumModifWithValue",
                                                _DATUM_MODIFIER_WITH_VALUE[kind]), value or 0.0)
-        if present:
-            self.present(obj, present)
-        XCAFDoc_Datum.Set_s(label).SetObject(obj)
-        if faces:
-            self.dimtol.SetDatum(_seq(faces), label)
-        return label
 
     def datums(self) -> None:
         targets = {t["id"]: t["value"] for t in self.pmi["datum_targets"]}
@@ -336,11 +357,14 @@ class _Builder:
             self.datum_faces[item["id"]] = faces
             for target_id in d["targets"]:
                 self.current = ("datum_targets", {"id": target_id, "value": targets[target_id]})
-                label = self.target(d["label"], target_id, targets[target_id], f"{what} target {target_id}")
+                made = self.target(d["label"], target_id, targets[target_id], f"{what} target {target_id}")
                 self.current = ("datums", item)
-                if label is not None:
+                if made is not None:
+                    label, obj, target_faces = made
                     first = first or label
                     self.labels[target_id] = label
+                    if d["feature"] is None:
+                        self.target_objects.setdefault(item["id"], []).append((obj, target_faces))
             if first is None:
                 self.lose(f"{what}: none of its targets has an XCAF form")
                 continue
@@ -361,6 +385,9 @@ class _Builder:
             for line in missing:
                 if not line.startswith("geometry "):
                     self.lose(f"{what}: {line}")
+            if any(line.startswith("geometry ") for line in missing):
+                self.lose(f"{what}: on supplemental geometry, which XCAF holds only as the target's placement; "
+                          "kept for to_step")
             faces = [self.sub_label(k, i) for k, i in found]
             if kind == "area" and not faces:
                 self.lose(f"{what}: its area has no faces")
@@ -395,12 +422,13 @@ class _Builder:
             obj.SetDatumTarget(compound)
         if t["movable"] is not None:
             self.lose(f"{what}: movable direction has no XCAF form")
+        bare = XCAFDimTolObjects_DatumObject(obj)  # without its callout: for the references to it
         self.present(obj, id)
         XCAFDoc_Datum.Set_s(label).SetObject(obj)
         if faces:
             self.dimtol.SetDatum(_seq(faces), label)
         self.count("datum target")
-        return label
+        return label, bare, faces
 
     # Dimensions ---------------------------------------------------------------------------------
 
@@ -449,6 +477,7 @@ class _Builder:
                 obj.SetModifiers(modifiers)
             if d["principle"] is not None:
                 self.lose(f"{what}: {d['principle']} has no XCAF form")
+            self.places(d, what)
             self.present(obj, id)
             label = self.dimtol.AddDimension()
             XCAFDoc_Dimension.Set_s(label).SetObject(obj)
@@ -457,6 +486,13 @@ class _Builder:
             self.labels[id] = label
             self.datum_faces[id] = first
             self.count("dimension")
+
+    def places(self, value, what: str) -> None:
+        """The decimal places a value is stated to, which XCAF's items do not hold: the item is
+        kept whole for to_step."""
+        if '"decimal_places": ' in json.dumps(value) and any(
+                v is not None for v in _all(value, "decimal_places")):
+            self.lose(f"{what}: the decimal places of its values have no XCAF form here; kept for to_step")
 
     def dimension_tolerance(self, obj, tolerance, nominal: float | None, what: str) -> None:
         if tolerance == "basic":
@@ -468,9 +504,10 @@ class _Builder:
         (form, value), = tolerance.items()
         if form == "deviations":
             upper, lower = self.units.value(value["upper"]), self.units.value(value["lower"])
-            obj.SetUpperTolValue(upper)
-            # XCAF holds the lower deviation as its size below nominal.
-            obj.SetLowerTolValue(-lower + 0.0)
+            # XCAF holds the lower deviation as its size below nominal, and either only on a
+            # dimension with a value.
+            if not (obj.SetUpperTolValue(upper) & obj.SetLowerTolValue(-lower + 0.0)):
+                self.lose(f"{what}: its ± tolerance, which XCAF holds only on a dimension with a value")
         elif form == "limits":
             obj.SetLowerBound(self.units.value(value["lower"]))
             obj.SetUpperBound(self.units.value(value["upper"]))
@@ -486,8 +523,9 @@ class _Builder:
                 obj.SetClassOfTolerance(c["deviation"]["of"] == "hole", variance, grade)
             if value["limits"] is not None and nominal is not None:
                 upper, lower = self.units.value(value["limits"]["upper"]), self.units.value(value["limits"]["lower"])
-                obj.SetUpperTolValue(float(Decimal(repr(upper)) - Decimal(repr(nominal))))
-                obj.SetLowerTolValue(float(Decimal(repr(nominal)) - Decimal(repr(lower))))
+                if not (obj.SetUpperTolValue(float(Decimal(repr(upper)) - Decimal(repr(nominal))))
+                        & obj.SetLowerTolValue(float(Decimal(repr(nominal)) - Decimal(repr(lower))))):
+                    self.lose(f"{what}: its fit's limits, which XCAF holds only on a dimension with a value")
 
     # Tolerances ---------------------------------------------------------------------------------
 
@@ -539,6 +577,7 @@ class _Builder:
                                ("description", "description")):
                 if t[key] is not None:
                     self.lose(f"{what}: its {words} has no XCAF form")
+            self.places(t, what)
             self.present(obj, id)
             label = self.dimtol.AddGeomTolerance()
             XCAFDoc_GeomTolerance.Set_s(label).SetObject(obj)
@@ -557,6 +596,8 @@ class _Builder:
         if zone["projected"] is not None:
             obj.SetZoneModifier(ZoneModif.XCAFDimTolObjects_GeomToleranceZoneModif_Projected)
             obj.SetValueOfZoneModifier(self.units.value(zone["projected"]["length"]) or 0.0)
+            if zone["projected"].get("end") is not None:
+                self.lose(f"{what}: where its projected zone ends has no XCAF form; kept for to_step")
         elif zone["runout_angle"] is not None:
             obj.SetZoneModifier(ZoneModif.XCAFDimTolObjects_GeomToleranceZoneModif_Runout)
             obj.SetValueOfZoneModifier(self.units.value(zone["runout_angle"]) or 0.0)
@@ -567,20 +608,33 @@ class _Builder:
 
     def datum_system(self, tolerance, compartments: list[dict[str, Any]], what: str) -> None:
         letters = {d["id"]: d["value"]["label"] for d in self.pmi["datums"]}
-        plain = all(len(c["references"]) == 1 and not c["modifiers"] and not c["references"][0]["modifiers"]
-                    for c in compartments)
         for position, c in enumerate(compartments, 1):
             for ref in c["references"]:
                 datum = ref["datum"]
                 if datum not in self.labels:
                     self.lose(f"{what}: datum {letters.get(datum, datum)} not carried")
                     continue
-                if plain:
-                    label = self.labels[datum]
+                modifiers = [*ref["modifiers"], *c["modifiers"]]
+                if datum in self.target_objects:
+                    labels = [self.target_reference(obj, faces, what, modifiers, position)
+                              for obj, faces in self.target_objects[datum]]
                 else:
-                    label = self.datum(letters[datum], self.datum_faces.get(datum, []), what,
-                                       modifiers=[*ref["modifiers"], *c["modifiers"]], position=position)
-                self.dimtol.SetDatumToGeomTol(label, tolerance)
+                    labels = [self.datum(letters[datum], self.datum_faces.get(datum, []), what,
+                                         modifiers=modifiers, position=position)]
+                for label in labels:
+                    self.dimtol.SetDatumToGeomTol(label, tolerance)
+
+    def target_reference(self, target, faces: list, what: str, modifiers, position: int):
+        """A reference to a datum defined by targets, for one of its targets: a datum of its own,
+        as the target is, with the reference's modifiers and position."""
+        label = self.dimtol.AddDatum()
+        obj = XCAFDimTolObjects_DatumObject(target)
+        obj.SetPosition(position)
+        self.modify(obj, modifiers, what)
+        XCAFDoc_Datum.Set_s(label).SetObject(obj)
+        if faces:
+            self.dimtol.SetDatum(_seq(faces), label)
+        return label
 
     # Notes, attributes, material ----------------------------------------------------------------
 
@@ -595,6 +649,9 @@ class _Builder:
             TDataStd_Name.Set_s(note, TCollection_ExtendedString(item["id"], True))
             self.note_labels[item["id"]] = note
             self.count("note")
+            if n.get("kind", "semantic text") != "semantic text" or n.get("callouts"):
+                # XCAF's comment holds the text alone: the note is kept whole for to_step.
+                self.lose(f"{what}: its kind ({n.get('kind')}) and callouts have no XCAF form; kept for to_step")
             if on is None:
                 notes.AddNote(note, self.part)
             elif "feature" in on:
@@ -719,7 +776,7 @@ class _Builder:
             for held in [h for h in kept if not placeable(h)]:
                 kept.remove(held)
                 what = held["item"].get("id", held["group"]) if isinstance(held["item"], dict) else held["group"]
-                self.unmapped.append(f"{what}: on faces outside the part's main shape; not kept for to_step")
+                self.unmapped.append(f"{what}: on faces or edges not placed on the part's main shape; not kept for to_step")
             if not kept:
                 continue
             text = json.dumps(kept)
@@ -745,7 +802,8 @@ class _Builder:
                     return None
                 items.append({"face": at})
             elif "edge" in i:
-                owner, _, at = self.topology.edges[i["edge"]] if i["edge"] < len(self.topology.edges) else (None, None, -1)
+                occt = self.edge(i["edge"])
+                owner, _, at = self.topology.edges[occt] if occt is not None else (None, None, -1)
                 if owner is None or _entry(owner) != _entry(self.part):
                     return None
                 items.append({"edge": at})
@@ -754,10 +812,34 @@ class _Builder:
         return {"id": feature["id"], "value": {"items": items}}
 
 
-KEPT_SCHEMA = "xcaf-pmi.kept/1"
 # The attribute holding what a label's item could not carry: a TDataStd_AsciiString of this GUID,
-# holding JSON {"schema", "units", "items": [{"group", "item"}], "features", "geometry"}.
+# holding JSON {"schema", "part", "units", "items": [{"group", "item"}], "features", "geometry",
+# "state", "fingerprints"}: "state" is the digest of the label's GD&T item as written
+# (``reader.state``), "fingerprints" each face and edge the features name by index, as written.
 KEPT = Standard_GUID("5b0a6c1e-3f0d-4a5e-9a5b-6d1c7e2f9a01")
+
+
+def seal(doc) -> None:
+    """Record on each fragment ``keep`` wrote what it depends on, as the document now states it:
+    the state of its label's item and the fingerprints of the faces and edges it names. ``read``
+    states them again as they are then, and ``to_haecceity`` restores a fragment only where they
+    agree (an item edited since, or faces changed, take the document's own reading instead)."""
+    from OCP.TDF import TDF_ChildIterator
+
+    from xcaf_pmi.reader import read_document
+
+    now = {k["on"]: k["now"] for k in read_document(doc, "<document>")["kept"]}
+    held = TDataStd_AsciiString()
+    it = TDF_ChildIterator(doc.Main(), True)
+    while it.More():
+        label = it.Value()
+        if label.IsAttribute(KEPT) and label.FindAttribute(KEPT, held) and _entry(label) in now:
+            fragment = json.loads(held.Get().ToCString())
+            state = now[_entry(label)]
+            fragment["state"] = state["state"]
+            fragment["fingerprints"] = {"faces": state["faces"], "edges": state["edges"]}
+            TDataStd_AsciiString.Set_s(label, KEPT, TCollection_AsciiString(json.dumps(fragment, ensure_ascii=True)))
+        it.Next()
 
 
 def _entry(label) -> str:
@@ -782,6 +864,18 @@ def _closure(text: str, features: dict, geometry: dict) -> list[str]:
     return found
 
 
+def _all(value, key: str):
+    """Every value of ``key`` in a JSON value."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == key:
+                yield v
+            yield from _all(v, key)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _all(v, key)
+
+
 def _renamed(value, names: dict[str, str]):
     if isinstance(value, str):
         return names.get(value, value)
@@ -790,3 +884,115 @@ def _renamed(value, names: dict[str, str]):
     if isinstance(value, dict):
         return {k: _renamed(v, names) for k, v in value.items()}
     return value
+
+
+# OCCT's own reading, where haecceity's is missing ----------------------------------------------
+
+def _signature(group: str, item: dict[str, Any]) -> tuple:
+    """What tells one GD&T item from another, to find the items OCCT's reader has that haecceity's
+    reading has not: its kind and value (a datum: its name)."""
+    if group == "datums":
+        return group, item["name"]
+    return group, item["type"], round(item["value"], 6)
+
+
+def missing(ours: dict[str, Any], native: dict[str, Any], parts: set[int] | None = None) -> list[tuple[str, dict]]:
+    """The datums, dimensions and tolerances of ``native`` (``read_document`` of OCCT's own reading
+    of a STEP) that ``ours`` (of to_xcaf's) has not, as many times as native has them more; with
+    ``parts``, all of native's on those parts (or on none)."""
+    out = []
+    for group in ("datums", "dimensions", "tolerances"):
+        if parts is not None:
+            out += [(group, item) for item in native[group]
+                    if not item["faces"] or any(r.get("part") in parts for r in item["faces"])]
+            continue
+        have: dict[tuple, int] = {}
+        for item in ours[group]:
+            have[_signature(group, item)] = have.get(_signature(group, item), 0) + 1
+        for item in native[group]:
+            key = _signature(group, item)
+            if group == "datums":
+                # A datum is the same datum however many times each reading states it.
+                if key not in have:
+                    out.append((group, item))
+                    have[key] = 1
+                continue
+            if have.get(key, 0):
+                have[key] -= 1
+            else:
+                out.append((group, item))
+    return out
+
+
+def adopt(doc, native_doc, native: dict[str, Any], items: list[tuple[str, dict]]) -> dict[str, int]:
+    """Copy ``items`` (``missing``'s) from OCCT's own reading of the STEP into ``doc``, which
+    OCCT read from the same file (its parts' faces and edges are numbered alike): each on its faces
+    and edges, a tolerance with its datums. Returns what was added, by kind."""
+    from OCP.TDF import TDF_Label, TDF_Tool
+
+    shapes = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    dimtol = XCAFDoc_DocumentTool.DimTolTool_s(doc.Main())
+    seq = Sequence_TDF_Label()
+    shapes.GetShapes(seq)
+    from xcaf_pmi.geometry import shape_map
+    from OCP.TopAbs import TopAbs_EDGE
+
+    # The parts as ``read_document`` numbers them: the shapes with faces that are no assembly.
+    parts = [seq.Value(i) for i in range(1, seq.Length() + 1) if not XCAFDoc_ShapeTool.IsAssembly_s(seq.Value(i))
+             and shape_map(XCAFDoc_ShapeTool.GetShape_s(seq.Value(i))).Extent()]
+
+    maps = [(shape_map(XCAFDoc_ShapeTool.GetShape_s(p)), shape_map(XCAFDoc_ShapeTool.GetShape_s(p), TopAbs_EDGE))
+            for p in parts]
+
+    def labels(refs) -> list:
+        out = []
+        for r in refs:
+            p = r.get("part")
+            if p is None or p >= len(parts):
+                continue
+            faces, edges = maps[p]
+            index, held = (r["face"], faces) if "face" in r else (r.get("edge"), edges)
+            if index is None or not 0 <= index < held.Extent():
+                continue
+            label = TDF_Label()
+            if not shapes.FindSubShape(parts[p], held.FindKey(index + 1), label):
+                label = shapes.AddSubShape(parts[p], held.FindKey(index + 1))
+            out.append(label)
+        return out
+
+    def theirs(entry: str):
+        label = TDF_Label()
+        TDF_Tool.Label_s(native_doc.Main().Data(), TCollection_AsciiString(entry), label)
+        return label
+
+    datum_of = {d["id"]: d for d in native["datums"]}
+
+    def datum(d: dict[str, Any]):
+        label = dimtol.AddDatum()
+        XCAFDoc_Datum.Set_s(label).SetObject(XCAFDimTolObjects_DatumObject(XCAFDoc_Datum.Set_s(theirs(d["id"])).GetObject()))
+        if on := labels(d["faces"]):
+            dimtol.SetDatum(_seq(on), label)
+        return label
+
+    added: dict[str, int] = {}
+    for group, item in items:
+        if group == "datums":
+            datum(item)
+        elif group == "dimensions":
+            label = dimtol.AddDimension()
+            XCAFDoc_Dimension.Set_s(label).SetObject(
+                XCAFDimTolObjects_DimensionObject(XCAFDoc_Dimension.Set_s(theirs(item["id"])).GetObject()))
+            first, second = labels(item["faces"]), labels(item["to"])
+            if first or second:
+                dimtol.SetDimension(_seq(first), _seq(second), label)
+        else:
+            label = dimtol.AddGeomTolerance()
+            XCAFDoc_GeomTolerance.Set_s(label).SetObject(
+                XCAFDimTolObjects_GeomToleranceObject(XCAFDoc_GeomTolerance.Set_s(theirs(item["id"])).GetObject()))
+            if on := labels(item["faces"]):
+                dimtol.SetGeomTolerance(_seq(on), label)
+            for ref in dict.fromkeys(r["datum"] for r in item["datum_refs"]):
+                if ref in datum_of:
+                    dimtol.SetDatumToGeomTol(datum(datum_of[ref]), label)
+        added[group[:-1]] = added.get(group[:-1], 0) + 1
+    return added

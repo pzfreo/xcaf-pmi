@@ -1,6 +1,8 @@
 """The STEP files the tests read: committed under ``fixtures/`` where their terms allow it and
 they are small, otherwise fetched once (at a pinned commit, checked by SHA-256) into a cache, or
-the test is skipped when they cannot be fetched.
+the test is skipped when they cannot be fetched; with ``XCAF_PMI_REQUIRE_FIXTURES=1`` (as CI runs)
+it fails instead. The decompressed copies in the cache are checked against the verified archive
+each time, and written again where they differ.
 
 Committed: NIST's CTC-01 with NIST's expected PMI, and three specify-core outputs on Apache-2.0
 corpus parts. Fetched from pzfreo/quiddity-rust (Apache-2.0): the other NIST models with their
@@ -49,6 +51,13 @@ SPECIFY = ["spool_fits.step", "thumbwheel_thread_knurl.step", "bolt_thread_knurl
 DRAFTWRIGHT_FILES = ["spindle_shaft_fit.step"]
 
 
+def _missing(message: str):
+    """A test file not to be had: the test is skipped, or fails where every file is required."""
+    if os.environ.get("XCAF_PMI_REQUIRE_FIXTURES") == "1":
+        pytest.fail(f"{message} (XCAF_PMI_REQUIRE_FIXTURES=1: every test file is required)", pytrace=False)
+    pytest.skip(message)
+
+
 def _cache() -> Path:
     folder = Path(os.environ.get("XCAF_PMI_CACHE") or Path.home() / ".cache" / "xcaf-pmi")
     folder.mkdir(parents=True, exist_ok=True)
@@ -69,7 +78,7 @@ def _raw(name: str) -> bytes:
         with urllib.request.urlopen(base, timeout=60) as response:
             data = response.read()
     except OSError as error:
-        pytest.skip(f"{name}: not committed (see tests/files.py) and could not be fetched: {error}")
+        _missing(f"{name}: not committed (see tests/files.py) and could not be fetched: {error}")
     if hashlib.sha256(data).hexdigest() != FETCHED[name]:
         pytest.fail(f"{name}: fetched bytes do not match the pinned SHA-256")
     held.parent.mkdir(parents=True, exist_ok=True)
@@ -82,9 +91,10 @@ def step(name: str) -> Path:
     folder = "nist" if name.startswith("nist_") and "_asme1_" in name else \
         "draftwright" if name in DRAFTWRIGHT_FILES else "specify"
     out = _cache() / "steps" / name
-    if not out.exists():
+    data = gzip.decompress(_raw(f"{folder}/{name}.gz"))  # the archive is checked by its SHA-256
+    if not out.exists() or hashlib.sha256(out.read_bytes()).digest() != hashlib.sha256(data).digest():
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(gzip.decompress(_raw(f"{folder}/{name}.gz")))
+        out.write_bytes(data)
     return out
 
 
