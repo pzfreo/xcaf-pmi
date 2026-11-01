@@ -118,7 +118,7 @@ def test_cli(tmp_path, capsys):
     assert [d["id"] for d in pmi.read(tmp_path / "part.step")["pmi"]["datums"]] == ["datum/A", "datum/B", "datum/C"]
     err = capsys.readouterr().err
     assert "xcaf-pmi: not carried over: note 0:1:9:1:2: also on dimension hole-diameter" in err
-    assert main([str(CADGEN), "-o", str(tmp_path / "strict.step"), "--strict"]) == 2
+    assert main([str(CADGEN), "-o", str(tmp_path / "strict.step"), "--strict"]) == 3  # not 2, a usage error
     assert not (tmp_path / "strict.step").exists()
 
 

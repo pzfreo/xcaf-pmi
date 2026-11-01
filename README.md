@@ -1,7 +1,8 @@
 # xcaf-pmi
 
 **Turn the GD&T in an OpenCascade document (`.xbf`) into an AP242 STEP file with semantic PMI**,
-the form that CAD, CAM and inspection tools read.
+the form that CAD, CAM and inspection tools read, **and an AP242 STEP back into an OpenCascade
+document**, with more of its PMI than OpenCascade's own reader keeps.
 
 If your application builds parts with OpenCascade and keeps its dimensions and tolerances in an
 XCAF document (text-to-cad's cadgen does), xcaf-pmi reads them out and
@@ -22,7 +23,8 @@ pip install git+https://github.com/pzfreo/xcaf-pmi        # Python 3.11+, brings
 ## Make an AP242 STEP
 
 ```bash
-xcaf-pmi part.xbf -o part.step
+xcaf-pmi to-step part.xbf -o part.step
+xcaf-pmi part.xbf -o part.step            # the same: an .xbf (or .xml) input goes to STEP
 ```
 
 `part.step` has the part's geometry, face names and colours, its GD&T as semantic PMI, and a drawn
@@ -30,7 +32,8 @@ callout for each item. haecceity reads the file back before it is written and re
 difference.
 
 What it prints, on stderr:
-- `not carried over: …`: something in the document that has no place in the PMI. `--strict`
+- `not carried over: …`: something in the document that has no place in the PMI, or that could
+  not be checked (an edge whose number on the STEP written cannot be checked, say). `--strict`
   fails on these instead, writing nothing.
 - `read back differently: …`: haecceity's read-back found the file says something other than what
   was sent. Also fails `--strict`.
@@ -41,7 +44,61 @@ What it prints, on stderr:
 Advanced: `--step geometry.step` writes the geometry alone (no PMI), `--haecceity part.pmi.json`
 the PMI as haecceity's JSON, and `--json found.json` the GD&T as read, in OCCT's terms.
 
-## From Python
+Exit status, both ways: 0 written; 1 failed (an input that cannot be read, a part the file has
+not, haecceity's refusal, an output that cannot be written); 2 a usage error; 3 `--strict` found
+something not carried over, and nothing was written.
+
+## Make an XCAF document from an AP242 STEP
+
+```bash
+xcaf-pmi to-xcaf part.step -o part.xbf
+xcaf-pmi part.step -o part.xbf            # the same: a .step or .stp input goes to XCAF
+```
+
+`part.xbf` has the part's geometry, names and colours as OpenCascade reads them, and the STEP's
+PMI as XCAF GD&T on its faces: dimensions with their tolerances, limits, fits, modifiers and
+qualifiers; geometric tolerances with their magnitudes, modifiers and datum systems; datums
+(also those no tolerance refers to) and datum targets; notes; material and density; user-defined
+attributes; and each item's drawn callout where the STEP has one. `--part N` takes only one
+part's PMI from a STEP with several (by default, every part's).
+
+What it prints, on stderr:
+- `not carried over: …`: something in the STEP's PMI that XCAF has no form for (a thread, a
+  surface texture, a general tolerance, a composite frame, the end of a projected tolerance zone,
+  an item placed only on supplemental geometry …).
+- `read finding: …`: how haecceity read the STEP: what it repaired (OCCT's malformed density unit,
+  say), read leniently, or could not read. Nothing it reads is dropped without one. A finding of
+  kind `fallback` says haecceity refused a part, or did not read an item, and OpenCascade's own
+  reading of it was taken instead.
+- `faces: … matched by entity` (or `edges: …`): the STEP's faces or edges are numbered differently
+  from OpenCascade's; they were matched by the STEP entity each came from (faces by their geometry
+  where that fails, one to one). A face or edge that matches none, or more than one, is listed as
+  not carried over and its items are kept unanchored, never placed on a guess.
+
+**What XCAF cannot hold is kept on the document**, as haecceity's JSON on the item's XCAF label
+(the part's, for an item with none), with the state of the item and of the faces it is on when it
+was kept. `to-step` restores it where the document still states the same: an item edited since
+is written as the document now has it, and what was kept for it is listed as not carried over.
+Other XCAF readers do not see it: to them it is an attribute they do not know. What the round
+trip STEP → XCAF → STEP still loses is listed, never dropped silently: items on surfaces
+OpenCascade reads beside the solid, edges whose number haecceity gives cannot be checked, and
+items haecceity's writer refuses.
+
+**Compared with OpenCascade's own GD&T reader** (`STEPCAFControl_Reader` with GD&T on), on every
+test file `to-xcaf` gets every category at least as right, and keeps the notes and materials
+OpenCascade's reader drops: where haecceity refuses a file (quiddity 0.4 refuses NIST's STC-06
+and STC-09 whole) or does not read an item (the position tolerance of OpenCascade's own export of
+cadgen's plate, whose diameter zone it writes as a runout zone with no angle), `to-xcaf` takes
+OpenCascade's reading of it. Facts right of those stated, OpenCascade's reader / `to-xcaf`:
+
+| what the files state | OpenCascade | `to-xcaf` | stated |
+|---|---|---|---|
+| NIST's 7 PMI test models, against NIST's expected PMI | 590 | 611 | 738 |
+| 7 of Specify's outputs and draftwright's spindle, against haecceity's own reading of them (what `to-xcaf` keeps, not whether it is right) | 171 | 224 | 232 |
+| cadgen's plate, both exports, against cadgen's document | 44 | 55 | 66 |
+
+`python tests/gaps.py` prints them by file and category.
+
 
 ```python
 from xcaf_pmi import to_step
@@ -49,10 +106,23 @@ from xcaf_pmi import to_step
 step = to_step("part.xbf")                 # AP242 STEP bytes; the document may also be bytes
 open("part.step", "wb").write(step)
 
-step, report = to_step("part.xbf", report=True)
+step, report = to_step("part.xbf", report=True)   # or an open XCAF document
 for line in report["unmapped"]:
     print("not carried over:", line)
 print(report["quiddity"]["differences"])    # haecceity's read-back check: [] when all is kept
+```
+
+The other way:
+
+```python
+from xcaf_pmi import to_xcaf, save
+
+doc = to_xcaf("part.step")                 # an OCP TDocStd_Document; the STEP may also be bytes
+save(doc, "part.xbf")
+
+doc, report = to_xcaf("part.step", report=True)
+print(report["unmapped"])                  # what XCAF has no form for (kept for to_step)
+print(report["findings"])                  # haecceity's findings on reading the STEP
 ```
 
 `to_step(..., strict=True)` raises `xcaf_pmi.NotCarriedOver` (its `unmapped` lists what) instead
@@ -93,11 +163,14 @@ callouts carry no names).
   tested on a multi-part document.
 - A document given as bytes is read through a temporary file (OCCT's in-memory BinXCAF reader is
   unusable from Python).
-
-## Coming
-
-The reverse direction, AP242 STEP to an XCAF document, with haecceity reading the PMI more fully
-than OCCT's own reader ([#5](https://github.com/pzfreo/xcaf-pmi/issues/5)).
+- Where quiddity 0.4 refuses a file (NIST's STC-06 and STC-09, over their attributes' names),
+  `to-xcaf` has only OpenCascade's reading of its GD&T: no notes, no kept extras.
+- quiddity 0.4 states no STEP entity for an edge: `to-xcaf` checks haecceity's edge numbers against
+  the edges the STEP's PMI is on, and reports those it cannot check (two of NIST STC-10's).
+- OpenCascade's STEP reader cannot read a string longer than its scanner's buffer; quiddity 0.4
+  writes its map of item ids as one string, which on NIST's STC-10 is too long for it (47 kB).
+- Where OpenCascade reads a part as a solid with surfaces beside it (some NIST models), PMI on those
+  surfaces is carried into XCAF but not back to STEP.
 
 ## More
 
@@ -109,6 +182,9 @@ than OCCT's own reader ([#5](https://github.com/pzfreo/xcaf-pmi/issues/5)).
   or [in the browser](https://editor.draftwright.io/specify).
 - Developing xcaf-pmi: `pip install -e '.[test]'` and `pytest`, which includes the end-to-end tests
   through haecceity. `tests/make_plate.py` builds a test document
-  through OCCT's own GD&T API, and `tests/fixtures/` holds text-to-cad's `pmi_plate` (MIT).
+  through OCCT's own GD&T API, and `tests/fixtures/` holds text-to-cad's `pmi_plate` (MIT), NIST's
+  CTC-01 with NIST's expected PMI, and three of Specify's outputs (see `tests/fixtures/README.md`).
+  The other test files are fetched once from pinned commits (`tests/files.py`) into
+  `~/.cache/xcaf-pmi` (or `$XCAF_PMI_CACHE`); tests needing them are skipped when offline.
 
 Apache-2.0.

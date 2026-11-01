@@ -23,3 +23,5 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install -e '.[test]'
       - run: python -m pytest -q tests
+        env:
+          XCAF_PMI_REQUIRE_FIXTURES: '1'  # a test file not fetched fails the run, not skips
