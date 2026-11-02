@@ -246,6 +246,26 @@ def _presentation(obj) -> dict[str, Any] | None:
     return out
 
 
+def _note_presentation(obj) -> dict[str, Any] | None:
+    """A note's own callout as XCAF holds it: its shape, its plane, where its text is placed and the
+    point on the part it is attached at (its leader's tip)."""
+    shape = obj.GetPresentation()
+    if (shape is None or shape.IsNull()) and not (obj.HasPlane() or obj.HasPointText() or obj.HasPoint()):
+        return None
+    out: dict[str, Any] = {"name": "", "polylines": [], "triangles": []}
+    if shape is not None and not shape.IsNull():
+        out["polylines"], out["triangles"] = _drawn(shape)
+    if obj.HasPlane():
+        plane = obj.GetPlane()
+        out["plane"] = {"origin": _xyz(plane.Location()), "normal": _xyz(plane.Direction()),
+                        "x_axis": _xyz(plane.XDirection())}
+    if obj.HasPointText():
+        out["text_point"] = _xyz(obj.GetPointText())
+    if obj.HasPoint():
+        out["leader"] = _xyz(obj.GetPoint())
+    return out
+
+
 def _drawn(shape) -> tuple[list, list]:
     """A presentation shape's edges as polylines and its faces as triangles."""
     from OCP.BRep import BRep_Tool
@@ -490,9 +510,12 @@ def read_document(doc: TDocStd_Document, source: str) -> dict[str, Any]:
             if not label.IsAttribute(XCAFDoc_NoteComment.GetID_s()):
                 unread.append(f"note {_entry(label)}: not a comment note")
                 continue
-            notes.append({"id": _entry(label), "name": _name(label),
-                          "text": XCAFDoc_NoteComment.Get_s(label).Comment().ToExtString(),
+            comment = XCAFDoc_NoteComment.Get_s(label)
+            notes.append({"id": _entry(label), "name": _name(label), "text": comment.Comment().ToExtString(),
                           "on": attached.get(_entry(label), [])})
+            shown = _note_presentation(comment.GetObject())
+            if shown:
+                notes[-1]["presentation"] = shown
 
     views = []
     if XCAFDoc_DocumentTool.CheckViewTool_s(doc.Main()):
