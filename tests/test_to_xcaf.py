@@ -172,7 +172,9 @@ GAPS = {
         'modifiers': (5, 8, 10), 'datums': (11, 11, 11), 'datum systems': (31, 35, 36), 'notes': (0, 0, 0),
         'material': (0, 0, 0), 'density': (0, 0, 0), 'names': (0, 0, 0),
     },
-    # haecceity refuses these two whole: to_xcaf takes OCCT's own reading.
+    # quiddity 0.4.0 refused these two whole; 0.4.4 reads them. STC-06 scores no dimensions or
+    # tolerances for either reader: NIST's expected PMI states its values in inches in a millimetre
+    # context, and the table scales by the context.
     'nist_stc_06_asme1_ap242-e3.stp': {
         'dimensions': (0, 0, 19), 'dimension tolerances': (0, 0, 19), 'tolerances': (0, 0, 26),
         'modifiers': (0, 0, 4), 'datums': (6, 6, 6), 'datum systems': (22, 22, 23), 'notes': (0, 0, 0),
@@ -228,7 +230,7 @@ GAPS = {
         'modifiers': (0, 0, 0), 'datums': (2, 2, 2), 'datum systems': (2, 2, 2), 'notes': (0, 0, 0),
         'material': (0, 1, 1), 'density': (0, 0, 0), 'names': (0, 0, 0),
     },
-    # haecceity does not read the position tolerance (a runout zone with no angle): OCCT's reading.
+    # its position tolerance's zone is a runout zone with no angle, which haecceity reads since 0.4.4
     "cadgen plate, OCCT's export": {
         'dimensions': (4, 4, 4), 'dimension tolerances': (4, 4, 4), 'tolerances': (5, 5, 5),
         'modifiers': (0, 0, 0), 'datums': (3, 3, 3), 'datum systems': (4, 4, 4), 'notes': (0, 0, 2),
@@ -268,33 +270,74 @@ def test_better_than_native(table):
     assert gaps.totals(table) == TOTALS
 
 
-@pytest.mark.parametrize("name", ["nist_stc_06_asme1_ap242-e3.stp", "nist_stc_09_asme1_ap242-e4.stp"])
-def test_haecceity_refuses(name):
-    """quiddity 0.4.0 refuses these models' attributes ("duplicate or empty item id"), and so the
-    whole file: to_xcaf takes OCCT's own reading of the GD&T, and says so."""
-    with pytest.raises(PmiError, match="duplicate or empty item id"):
-        pmi.read(files.step(name))
+FALLBACK = {"nist_stc_06_asme1_ap242-e3.stp": 2 * ["dimension CommonLabel 0: haecceity did not read it; "
+                                                    "OCCT's own reading of it is used"],
+            "nist_stc_09_asme1_ap242-e4.stp": []}
+
+
+@pytest.mark.parametrize("name", FALLBACK)
+def test_haecceity_reads_duplicate_item_ids(name):
+    """quiddity 0.4.0 refused these models whole over their attributes' duplicate or empty ids;
+    since 0.4.4 it gives such items content ids instead, so to_xcaf has haecceity's reading of
+    them rather than OCCT's. (On STC-06 haecceity does not read a shape aspect that identifies no
+    face, so OCCT's reading of what is on it is taken, item by item.)"""
+    assert pmi.read(files.step(name))["pmi"]["tolerances"]
     doc, report = to_xcaf(files.step(name), report=True)
-    assert [f["detail"] for f in report["findings"] if f["kind"] == "fallback"] == \
-           [f"haecceity refuses the part ({_refusal(name)}); OCCT's own reading of its GD&T is used"]
+    assert [f["detail"] for f in report["findings"] if f["kind"] == "fallback"] == FALLBACK[name]
     assert read_document(doc, name)["tolerances"]
 
 
-def _refusal(name):
-    try:
-        pmi.read(files.step(name))
-    except PmiError as error:
-        return str(error)
+def test_a_part_haecceity_refuses_is_taken_from_occt(ctc01, monkeypatch):
+    """Where haecceity refuses a part, to_xcaf takes OCCT's own reading of its GD&T, and says so."""
+    def refuse(*args, **kwargs):
+        raise PmiError("duplicate or empty item id")
+
+    monkeypatch.setattr(pmi, "read", refuse)
+    doc, report = to_xcaf(ctc01, report=True)
+    assert [f["detail"] for f in report["findings"] if f["kind"] == "fallback"] == \
+           ["haecceity refuses the part (duplicate or empty item id); OCCT's own reading of its GD&T is used"]
+    assert read_document(doc, CTC01)["tolerances"]
 
 
-def test_an_item_haecceity_does_not_read_is_taken_from_occt(tmp_path):
+def test_haecceity_reads_a_runout_zone_with_no_angle(tmp_path):
     """OCCT's export of cadgen's plate states its position tolerance's zone as a runout zone with
-    no angle, which haecceity does not read: to_xcaf takes that tolerance, with its datums, from
-    OCCT's own reading."""
+    no angle. quiddity 0.4.1 did not read that tolerance; since 0.4.4 it reads the zone's form
+    without the angle (and says so), so to_xcaf has it from haecceity, with its datums."""
     from test_reader import CADGEN
 
     step = tmp_path / "occt.step"
     step.write_bytes(gaps.occt_step(CADGEN))
+    doc, report = to_xcaf(step, report=True)
+    assert [f for f in report["findings"] if f["kind"] == "fallback"] == []
+    assert any("runout_zone_definition without an orientation angle" in f["detail"] for f in report["findings"])
+    position = [t for t in read_document(doc, "occt")["tolerances"] if t["type"] == "Position"]
+    assert len(position) == 1 and position[0]["datums"] == ["A", "B", "C"] and position[0]["faces"]
+
+
+def test_an_item_haecceity_does_not_read_is_taken_from_occt(tmp_path, monkeypatch):
+    """Where haecceity does not read an item (a finding says so), to_xcaf takes it, with its
+    datums, from OCCT's own reading. Simulated on OCCT's export of cadgen's plate by leaving its
+    position tolerance out of haecceity's reading, as quiddity 0.4.1 did."""
+    from test_reader import CADGEN
+
+    from xcaf_pmi import from_step
+
+    step = tmp_path / "occt.step"
+    step.write_bytes(gaps.occt_step(CADGEN))
+    read_pmi, read_findings = pmi.read, from_step.findings
+
+    def without_position(*args, **kwargs):
+        document = read_pmi(*args, **kwargs)
+        listed = document["pmi"]["tolerances"]
+        listed[:] = [t for t in listed if t["value"]["kind"] != "position_tolerance"]
+        return document
+
+    def not_read(*args, **kwargs):
+        return read_findings(*args, **kwargs) + [{"kind": "nonconformance", "part": None, "entity": "position_tolerance",
+                                                  "ids": [], "detail": "tolerance not read"}]
+
+    monkeypatch.setattr(pmi, "read", without_position)
+    monkeypatch.setattr(from_step, "findings", not_read)
     doc, report = to_xcaf(step, report=True)
     assert [f["detail"] for f in report["findings"] if f["kind"] == "fallback"] == \
            ["tolerance Position 0.1: haecceity did not read it; OCCT's own reading of it is used"]
