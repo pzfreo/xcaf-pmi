@@ -11,7 +11,7 @@ the STEP as AP242, in one step.
 
 No GD&T in your document yet? xcaf-pmi only carries what is there. To add it, give the STEP to
 [Specify](https://pypi.org/project/specify-core/) (`pip install specify-core`, or
-[in the browser](https://editor.draftwright.io/specify)): it recognises the features and asks only
+[in the browser](https://draftwright.io/specify)): it recognises the features and asks only
 what is missing.
 
 ## Install
@@ -226,7 +226,7 @@ the note and `to-step` writes the general tolerance it now states.
   and [JSON Schema](https://github.com/pzfreo/quiddity-rust/blob/main/crates/haecceity/schema/haecceity.pmi-1.json).
 - To add manufacturing intent to a STEP that has none (fits, datums, tolerances, by answering a
   few questions): [Specify](https://pypi.org/project/specify-core/) (`pip install specify-core`),
-  or [in the browser](https://editor.draftwright.io/specify).
+  or [in the browser](https://draftwright.io/specify).
 - Developing xcaf-pmi: `pip install -e '.[test]'` and `pytest`, which includes the end-to-end tests
   through haecceity. `tests/make_plate.py` builds a test document
   through OCCT's own GD&T API, and `tests/fixtures/` holds text-to-cad's `pmi_plate` (MIT), NIST's
