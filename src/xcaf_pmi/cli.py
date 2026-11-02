@@ -64,6 +64,20 @@ def _input(argv: list[str]) -> str | None:
     return None
 
 
+def _presentation_left(shown: dict | None) -> str:
+    """The document's own saved views and placed callouts, as a phrase; empty when it has none."""
+    if not shown:
+        return ""
+    views = [v["name"] for v in shown.get("views", [])]
+    callouts = sum(len(listed) for listed in shown.get("items", {}).values())
+    said = []
+    if views:
+        said.append(f"{len(views)} saved view{'s' if len(views) > 1 else ''} ({', '.join(views)})")
+    if callouts:
+        said.append(f"the placement of {callouts} callout{'s' if callouts > 1 else ''}")
+    return " and ".join(said)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] in VERBS:
@@ -143,6 +157,10 @@ def to_step_main(argv: list[str]) -> int:
             problems = report["unmapped"]
             if args.presentation:
                 _write_json(args.presentation, report["presentation"])
+            elif shown := _presentation_left(report["presentation"]):
+                # quiddity writes its own layout: say what of the document's is not in the STEP.
+                print(f"xcaf-pmi: not written to the STEP (quiddity cannot yet): {shown}; "
+                      "--presentation FILE keeps them as JSON", file=sys.stderr)
             for line in report["findings"]:
                 print(f"xcaf-pmi: {line}", file=sys.stderr)
             details = report["quiddity"]

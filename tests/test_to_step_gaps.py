@@ -86,6 +86,16 @@ def test_callouts_where_the_document_places_them():
     assert all(g["plane_id"] in planes for g in graphics)
 
 
+def test_cli_says_the_presentation_is_not_written(tmp_path, capsys):
+    """Without --presentation, the views and callout placements the STEP leaves out are named."""
+    assert main(["to-step", str(CADGEN), "-o", str(tmp_path / "part.step")]) == 0
+    said = capsys.readouterr().err
+    assert "not written to the STEP" in said and "2 saved views (" in said and "A-A" in said and "iso" in said
+    assert main(["to-step", str(CADGEN), "-o", str(tmp_path / "part.step"), "--presentation",
+                 str(tmp_path / "p.json")]) == 0
+    assert "not written to the STEP" not in capsys.readouterr().err
+
+
 def test_cli_writes_the_presentation(tmp_path):
     out = tmp_path / "part.presentation.json"
     assert main(["to-step", str(CADGEN), "-o", str(tmp_path / "part.step"), "--presentation", str(out)]) == 0
