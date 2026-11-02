@@ -143,6 +143,8 @@ def to_step_main(argv: list[str]) -> int:
             problems = report["unmapped"]
             if args.presentation:
                 _write_json(args.presentation, report["presentation"])
+            for line in report["findings"]:
+                print(f"xcaf-pmi: {line}", file=sys.stderr)
             details = report["quiddity"]
             for difference in details["differences"]:
                 print(f"xcaf-pmi: read back differently: {difference}", file=sys.stderr)

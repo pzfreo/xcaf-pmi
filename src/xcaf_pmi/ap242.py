@@ -167,8 +167,9 @@ def to_step(document: str | Path | bytes | Any, part: int | None = None, *, stri
 
     What could not be carried over is never dropped silently: with ``strict`` it raises
     ``NotCarriedOver``, as it does for any difference haecceity finds reading the result back;
-    with ``report`` the result is ``(bytes, {"unmapped": [...], "quiddity": {...},
-    "presentation": {...}})``, quiddity's report holding its read-back ``differences`` and its
+    with ``report`` the result is ``(bytes, {"unmapped": [...], "findings": [...], "quiddity": {...},
+    "presentation": {...}})``, ``findings`` how notes were read (one written as the general
+    tolerance it states, or why one naming a general tolerance stays text), quiddity's report holding its read-back ``differences`` and its
     findings (for a document of several parts, those of all, and each part's in ``parts``), and
     ``presentation`` the document's own callouts and saved views as ``haecceity.presentation/1``
     (which quiddity 0.4 cannot yet write in place of its layout). haecceity's refusals raise
@@ -192,7 +193,7 @@ def to_step(document: str | Path | bytes | Any, part: int | None = None, *, stri
     # name and number of faces, in order (never by position alone).
     numbered = _numbered(found, geometry) if several else [None]
     written = geometry
-    unmapped, reports, presentation = [], [], None
+    unmapped, findings, reports, presentation = [], [], [], None
     for index in chosen:
         mapped = to_haecceity(found, index)
         if any("edge" in i for f in mapped["document"]["pmi"]["features"] for i in f["value"].get("items", [])):
@@ -204,6 +205,7 @@ def to_step(document: str | Path | bytes | Any, part: int | None = None, *, stri
         written, details = _write(written, mapped, numbered[index], strict)
         checked = [prefix + line for line in _edges_checked(written, mapped, numbered[index])]
         unmapped += lines + [prefix + line for line in mapped.get("refused", [])] + checked
+        findings += [prefix + line for line in mapped["findings"]]
         reports.append(details)
         presentation = presentation or mapped["presentation"]
         if strict and (details["differences"] or checked):
@@ -213,7 +215,8 @@ def to_step(document: str | Path | bytes | Any, part: int | None = None, *, stri
            for key in ("differences", "read_findings", "writer_findings", "output_findings")},
         "part": None, "parts": reports}
     unmapped = list(dict.fromkeys(unmapped))
-    return (written, {"unmapped": unmapped, "quiddity": details, "presentation": presentation}) if report else written
+    return (written, {"unmapped": unmapped, "findings": findings, "quiddity": details, "presentation": presentation}) \
+        if report else written
 
 
 def _numbered(found: dict[str, Any], geometry: bytes) -> list[int]:

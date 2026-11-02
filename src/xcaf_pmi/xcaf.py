@@ -63,7 +63,7 @@ from OCP.XCAFDoc import (
 
 from xcaf_pmi.haecceity import (
     ANGLE, DATUM_MODIFIER, DATUM_MODIFIER_WITH_VALUE, DIMENSION_MODIFIER, KEPT_SCHEMA, LOCATION, MATERIAL, QUALIFIER,
-    SIZE, TOLERANCE, TOLERANCE_MODIFIER,
+    SIZE, TOLERANCE, TOLERANCE_MODIFIER, general_text, general_tolerance,
 )
 
 # Each table of ``to_haecceity``, the other way round: haecceity's name to OCCT's.
@@ -179,6 +179,7 @@ class _Builder:
         self.current: tuple[str, dict] | None = None  # the item being built: (its group, it)
         self.lossy: dict[str, tuple[str, dict]] = {}
         self.note_labels: dict[str, Any] = {}  # items the document cannot hold in full, by id
+        self.general_noted = False  # a general tolerance written as a note
 
     def run(self) -> dict[str, Any]:
         self.datums()
@@ -652,6 +653,10 @@ class _Builder:
             if n.get("kind", "semantic text") != "semantic text" or n.get("callouts"):
                 # XCAF's comment holds the text alone: the note is kept whole for to_step.
                 self.lose(f"{what}: its kind ({n.get('kind')}) and callouts have no XCAF form; kept for to_step")
+            elif on is None and general_tolerance(n["text"])[0] is not None:
+                # A note of the part that to_haecceity would read as a general tolerance: kept whole,
+                # for to_step to write it as the note it is.
+                self.lossy.setdefault(item["id"], self.current)
             if on is None:
                 notes.AddNote(note, self.part)
             elif "feature" in on:
@@ -740,11 +745,42 @@ class _Builder:
                  "derived_geometry": "derived geometry", "standards": "standard"}
         for key, name in names.items():
             for i, item in enumerate(self.pmi[key]):
+                if key == "general" and self.general_note(item):
+                    continue
                 label = item.get("id") or item.get("document") or str(item)
                 self.lose(f"{name} {label}: XCAF's GD&T has no place for it; kept for to_step")
                 self.lossy[f"{key}/{i}"] = (key, item)
         if self.pmi["decimal_places"] is not None:
             self.lossy["decimal_places"] = ("decimal_places", self.pmi["decimal_places"])
+
+    def general_note(self, item: dict[str, Any]) -> bool:
+        """An ISO 2768 general tolerance, as XCAF can state it: a note on the part, in the wording
+        ``to_haecceity`` reads as that tolerance ("ISO 2768-mK"). Where the STEP states it as a
+        note of the part too (Specify does), that note is the one; else a note is added. The
+        tolerance, and that note, are kept whole on the note, so that to_step writes both as the
+        STEP stated them. Another general tolerance (a table, or a class of no ISO 2768 classes)
+        has no XCAF form."""
+        held = item["value"].get("class")
+        if not held or not held.get("standard") or not item.get("id") or self.general_noted:
+            # One only: two notes of general tolerances are text to to_haecceity.
+            return False
+        self.general_noted = True
+        standard = {"linear": held["standard"]["linear"], "geometric": held["standard"].get("geometric")}
+        stated = next((n for n in self.pmi["notes"] if n["value"]["on"] is None and n["id"] in self.note_labels
+                       and general_tolerance(n["value"]["text"])[0] == standard), None)
+        if stated is not None:
+            note = self.note_labels[stated["id"]]
+            self.lossy.setdefault(stated["id"], ("notes", stated))
+        else:
+            notes = XCAFDoc_DocumentTool.NotesTool_s(self.doc.Main())
+            note = notes.CreateComment(TCollection_ExtendedString("haecceity"), TCollection_ExtendedString(""),
+                                       TCollection_ExtendedString(general_text(standard), True)).Label()
+            TDataStd_Name.Set_s(note, TCollection_ExtendedString(item["id"], True))
+            notes.AddNote(note, self.part)
+        self.note_labels[item["id"]] = note
+        self.lossy[item["id"]] = ("general", item)
+        self.count("general tolerance")
+        return True
 
     # What XCAF cannot hold, kept for to_step ---------------------------------------------------
 

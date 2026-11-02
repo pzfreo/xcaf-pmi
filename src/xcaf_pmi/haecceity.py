@@ -15,6 +15,7 @@ whole part has no owner (a note of the part). What else a note is on is listed i
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 SCHEMA = "haecceity.pmi/1"
@@ -102,6 +103,41 @@ QUALIFIER = {"Min": "minimum", "Max": "maximum", "Avg": "average"}
 ANGLE = {"Small": "small", "Large": "large", "Equal": "equal"}
 
 
+# A note whose whole text states an ISO 2768 general tolerance (case and spacing aside): the
+# class alone ("ISO 2768-m", "ISO 2768-mK", "ISO 2768-1 m"), after "GENERAL TOLERANCES" or
+# "Tolerances per". XCAF has no general tolerance, so code-first CAD states it as a note.
+_CLASS = r"iso\s*2768\s*(?:(?P<part>-\s*1)\s+|-\s*|\s+)(?P<linear>[fmcv])(?P<geometric>[hkl])?"
+_GENERAL = re.compile(r"(?:general\s+tolerances?\s*(?:(?:per|to)\s+)?:?\s*|tolerances?\s+(?:per|to)\s*:?\s*)?"
+                      + _CLASS + r"\s*\.?", re.IGNORECASE)
+_CLASS_IN = re.compile(_CLASS + r"\b", re.IGNORECASE)
+
+
+def general_tolerance(text: str) -> tuple[dict[str, Any] | None, str | None]:
+    """The ISO 2768 classes a note's whole text states (``Iso2768``: ``{"linear": "m",
+    "geometric": "K"}``), else why a note that names a general tolerance is not one (``None`` for
+    a note that does not)."""
+    found = _GENERAL.fullmatch(" ".join(text.split()))
+    if found and not (found["part"] and found["geometric"]):
+        geometric = found["geometric"].upper() if found["geometric"] else None
+        return {"linear": found["linear"].lower(), "geometric": geometric}, None
+    if found:
+        return None, "ISO 2768-1 has no geometric class (that is ISO 2768-2's): ISO 2768-mK states both"
+    if re.search(r"22081", text):
+        return None, "it names ISO 22081, which haecceity has no general tolerance for (only ISO 2768)"
+    if re.search(r"2768", text):
+        if _CLASS_IN.search(text):
+            return None, "it states more than the general tolerance"
+        return None, "it states no ISO 2768 class (f, m, c or v, optionally H, K or L)"
+    if re.search(r"general\s+tolerance", text, re.IGNORECASE):
+        return None, "it names no standard haecceity has a general tolerance for (only ISO 2768)"
+    return None, None
+
+
+def general_text(standard: dict[str, Any]) -> str:
+    """The canonical wording of ISO 2768 classes, as haecceity recognises them: "ISO 2768-mK"."""
+    return f"ISO 2768-{standard['linear']}{standard.get('geometric') or ''}"
+
+
 def _decimal(value: float) -> str:
     return repr(float(value) + 0.0).replace("inf", "0")
 
@@ -145,7 +181,8 @@ def _fit(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
-    """``haecceity.pmi/1`` for one part of ``read``'s result, and what could not be mapped."""
+    """``haecceity.pmi/1`` for one part of ``read``'s result, what could not be mapped, and
+    ``findings``: how a note was read (a general tolerance it states, or why it stays text)."""
     unmapped: list[str] = list(found["unread"])
     faces = found["parts"][part]["faces"]
     names = [f.get("name") for f in faces]
@@ -425,12 +462,35 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
             "modifiers": ([material] if material else []) + [TOLERANCE_MODIFIER[m] for m in named_mods if m in TOLERANCE_MODIFIER],
             "target": "whole_part" if whole else {"feature": f}, "unequal": None, "unit_basis": None, "zone": zone}})
 
-    notes = []
-    for n in found.get("notes", []):
-        if elsewhere([r for item in n["on"] for r in item.get("faces", [])]) or \
-                (n["on"] and all("part" in item and item["part"] != part for item in n["on"])):
-            continue
+    notes, general, findings = [], [], []
+    ours = [n for n in found.get("notes", [])
+            if not (elsewhere([r for item in n["on"] for r in item.get("faces", [])]) or
+                    (n["on"] and all("part" in item and item["part"] != part for item in n["on"])))]
+    # A note whose whole text states a general tolerance, on the part alone, is the part's general
+    # tolerance: written as one (with its canonical wording), not as text. Only one: two such
+    # notes leave which applies open, and both stay text.
+    stated: dict[str, dict[str, Any]] = {}
+    written: list[tuple[str, str]] = []  # each note written as the general tolerance: its id, and saying so
+    for n in ours:
         what = f"note {n.get('name') or n['id']}"
+        standard, why = general_tolerance(n["text"])
+        if standard is not None and any("part" not in item for item in n["on"]):
+            why, standard = "it is on more than the part, and a general tolerance is of the whole part", None
+        if standard is not None:
+            stated[n["id"]] = standard
+        elif why:
+            findings.append(f"{what} ({n['text']!r}) kept as text: {why}")
+    if len(stated) > 1:
+        findings += [f"note {n.get('name') or n['id']} ({n['text']!r}) kept as text: the part's notes state "
+                     f"{len(stated)} general tolerances" for n in ours if n["id"] in stated]
+        stated = {}
+    for n in ours:
+        what = f"note {n.get('name') or n['id']}"
+        if n["id"] in stated:
+            text = general_text(stated[n["id"]])
+            general.append({"id": ids[n["id"]], "value": {"class": {"text": text, "standard": stated[n["id"]]}}})
+            written.append((ids[n["id"]], f"{what} ({n['text']!r}) written as general tolerance {text}"))
+            continue
         on, rest = None, []
         faces_on = [ref for item in n["on"] if "faces" in item for ref in item["faces"]]
         if faces_on and (f := feature(faces_on, what)) is not None:
@@ -461,7 +521,7 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
         material = {"id": held["name"], "name": held.get("description"), "density": density}
 
     groups = {"dimensions": dimensions, "tolerances": tolerances, "notes": notes, "attributes": [],
-              "general": [], "threads": [], "knurls": [], "holes": [], "surface_textures": [],
+              "general": general, "threads": [], "knurls": [], "holes": [], "surface_textures": [],
               "tolerance_relations": [], "derived_geometry": []}
     restore(tuple(groups), groups)
     # A restored tolerance on a datum this part has not (one of another part's faces) cannot be
@@ -488,6 +548,13 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
                 decimal_places = held["item"]
             elif held["group"] == "material":
                 material = held["item"]
+    # A note restored as the note to_xcaf kept (a STEP's note stating a general tolerance) is not
+    # read as a general tolerance: the STEP's own general tolerance, if it had one, is the one kept.
+    for id, line in written:
+        if any(n["id"] == id for n in groups["notes"]):
+            groups["general"][:] = [g for g in groups["general"] if g["id"] != id]
+        else:
+            findings.append(line)
     words = {"dimensions": "dimension", "tolerances": "tolerance", "notes": "note"}
     gone = {f"{words[g]} {x['id']}:" for g in words for x in groups[g] if x["id"] in restored}
     gone |= {f"datum {d['value']['label']}" for d in datums if d["id"] in restored}
@@ -506,7 +573,7 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
     pmi = _one_unit_each(units, pmi)
     document = {"schema": SCHEMA, "units": units,
                 "pmi": pmi}
-    return {"document": document, "unmapped": unmapped, "restored": sorted(restored),
+    return {"document": document, "unmapped": unmapped, "findings": findings, "restored": sorted(restored),
             "presentation": _presentation(found, pmi, ids, owners)}
 
 

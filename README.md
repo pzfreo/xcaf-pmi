@@ -37,6 +37,8 @@ What it prints, on stderr:
   fails on these instead, writing nothing.
 - `read back differently: …`: haecceity's read-back found the file says something other than what
   was sent. Also fails `--strict`.
+- `note … written as general tolerance ISO 2768-m`, or `note … kept as text: …`: how a note
+  that states a general tolerance was read (see [General tolerances](#general-tolerances)).
 - `read finding: …`, `writer finding: …`, `output finding: …`: information about how something was
   read or written (e.g. a free-text note kept as semantic text, or a datum target described as the
   CAx-IF practice asks where AP242's own rules disagree). Nothing is lost.
@@ -62,13 +64,14 @@ xcaf-pmi part.step -o part.xbf            # the same: a .step or .stp input goes
 `part.xbf` has the part's geometry, names and colours as OpenCascade reads them, and the STEP's
 PMI as XCAF GD&T on its faces: dimensions with their tolerances, limits, fits, modifiers and
 qualifiers; geometric tolerances with their magnitudes, modifiers and datum systems; datums
-(also those no tolerance refers to) and datum targets; notes; material and density; user-defined
-attributes; and each item's drawn callout where the STEP has one. `--part N` takes only one
+(also those no tolerance refers to) and datum targets; notes; an ISO 2768 general tolerance, as a
+note of the part ("ISO 2768-mK", see [General tolerances](#general-tolerances)); material and
+density; user-defined attributes; and each item's drawn callout where the STEP has one. `--part N` takes only one
 part's PMI from a STEP with several (by default, every part's).
 
 What it prints, on stderr:
 - `not carried over: …`: something in the STEP's PMI that XCAF has no form for (a thread, a
-  surface texture, a general tolerance, a composite frame, the end of a projected tolerance zone,
+  surface texture, a general tolerance other than an ISO 2768 class, a composite frame, the end of a projected tolerance zone,
   an item placed only on supplemental geometry …).
 - `read finding: …`: how haecceity read the STEP: what it repaired (OCCT's malformed density unit,
   say), read leniently, or could not read. Nothing it reads is dropped without one. A finding of
@@ -148,6 +151,7 @@ listed. `read`, `export_step` and `to_haecceity` are the steps on their own. `re
   statistical, line element, common zone …).
 - **Notes**, on the part, on faces, or on a dimension or tolerance. A note has one owner in the
   PMI: one also on something else is listed as not carried over for that.
+- **General tolerances** (ISO 2768), stated as a note of the part: see below.
 - **Material**, with its density stated in g/cm³. OCCT's own STEP writer gets that unit wrong
   (gram³·cm²), so readers ignore its density; this route writes it correctly.
 - **Names:** your item names (e.g. `thickness`, `hole-position`) become the PMI's ids, and your face
@@ -172,6 +176,34 @@ NIST's STEP File Analyzer (5.41) reads the same semantic PMI from both; on this 
 finds the density valid (OCCT's export fails with "the length unit exponent should be -3"), no
 duplicate datum system, and every callout as graphical PMI (none on cadgen's export, whose
 callouts carry no names).
+
+### General tolerances
+
+XCAF has no general tolerance, so a document states one as a note. A note on the part (not on a
+face or an item) whose whole text is one of these wordings is written as the part's general
+tolerance (ISO 2768-1's linear class, and ISO 2768-2's geometric class where stated), not as a
+note; case and spacing do not matter:
+
+| wording | general tolerance |
+|---|---|
+| `ISO 2768-m` (or `-f`, `-c`, `-v`) | ISO 2768-m |
+| `ISO 2768-mK` (or `H`, `L`) | ISO 2768-mK |
+| `ISO 2768-1 m` | ISO 2768-m |
+| `GENERAL TOLERANCES ISO 2768-m` (also `General tolerances: ISO 2768-m`) | ISO 2768-m |
+| `Tolerances per ISO 2768-f` | ISO 2768-f |
+
+`ISO 2768-mK` is the canonical wording: the general tolerance a note states is written with it.
+`to-step` reports each such note (`note … written as general tolerance ISO 2768-mK`). A note that
+says anything more (`ISO 2768-m unless otherwise stated`, `DIN ISO 2768-m`), names another
+standard (ISO 22081's general specifications, which haecceity has no general tolerance for; DIN
+7168), states an ISO 2768-1 class with a geometric class (`ISO 2768-1 mK`), is on a face or an
+item, or is one of two such notes on a part, stays a note; where it names ISO 2768, ISO 22081
+or a general tolerance, `to-step` says why.
+
+The other way, `to-xcaf` writes a STEP's ISO 2768 general tolerance as a note of the part in the
+canonical wording (or uses the STEP's own note of it, as Specify writes one), and keeps the
+tolerance on that note, so STEP → XCAF → STEP gives the same general tolerance and notes. Edit
+the note and `to-step` writes the general tolerance it now states.
 
 ## Limits
 
