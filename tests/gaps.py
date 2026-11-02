@@ -433,10 +433,11 @@ def placed(step, part: int | None = None) -> dict[str, Any]:
                 # A length in millimetres, whatever unit the file states it in.
                 return {"unit": "millimetre",
                         "value": repr(round(number(value["value"]) * _MM[units[value["unit"]]], 6) + 0.0)}
-            return {k: resolved(v, k) for k, v in value.items() if k != "id"}
+            return {k: resolved(v, k) for k, v in value.items() if k not in ("id", "identifier")}
         return value
 
-    # Each item keeps its id beside it ("id"), to name it; compare items without it.
+    # Each item keeps its id beside it ("id"), to name it; compare items without it, and without
+    # the file's own name for it ("identifier", quiddity 0.4.4), which is an id as well.
     return {group: [{**resolved(x), "id": x.get("id")} if isinstance(x, dict) else x for x in listed]
             if isinstance(listed, list) else resolved(listed)
             for group, listed in document["pmi"].items() if group not in ("features", "geometry")}

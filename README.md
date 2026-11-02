@@ -93,10 +93,9 @@ items haecceity's writer refuses.
 
 **Compared with OpenCascade's own GD&T reader** (`STEPCAFControl_Reader` with GD&T on), on every
 test file `to-xcaf` gets every category at least as right, and keeps the notes and materials
-OpenCascade's reader drops: where haecceity refuses a file (quiddity 0.4 refuses NIST's STC-06
-and STC-09 whole) or does not read an item (the position tolerance of OpenCascade's own export of
-cadgen's plate, whose diameter zone it writes as a runout zone with no angle), `to-xcaf` takes
-OpenCascade's reading of it. Facts right of those stated, OpenCascade's reader / `to-xcaf`:
+OpenCascade's reader drops: where haecceity refuses a part or does not read an item (on NIST's
+STC-06, what lies on a shape aspect that identifies no face), `to-xcaf` takes OpenCascade's
+reading of it. Facts right of those stated, OpenCascade's reader / `to-xcaf`:
 
 | what the files state | OpenCascade | `to-xcaf` | stated |
 |---|---|---|---|
@@ -210,8 +209,9 @@ the note and `to-step` writes the general tolerance it now states.
 
 - A document given as bytes is read through a temporary file (OCCT's in-memory BinXCAF reader is
   unusable from Python).
-- Where quiddity 0.4 refuses a file (NIST's STC-06 and STC-09, over their attributes' names),
-  `to-xcaf` has only OpenCascade's reading of its GD&T: no notes, no kept extras.
+- Where haecceity refuses a part, `to-xcaf` has only OpenCascade's reading of its GD&T: no notes,
+  no kept extras. (quiddity 0.4.4 reads every test file; earlier 0.4 releases refused NIST's
+  STC-06 and STC-09 over their attributes' duplicate or empty ids.)
 - quiddity 0.4 states no STEP entity for an edge: `to-xcaf` checks haecceity's edge numbers against
   the edges the STEP's PMI is on, and reports those it cannot check (two of NIST STC-10's).
 - OpenCascade's STEP reader cannot read a string longer than its scanner's buffer; quiddity 0.4
