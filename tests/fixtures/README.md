@@ -2,12 +2,12 @@
 
 `nist/` holds NIST's MBE PMI test model CTC-01 as AP242 (`nist_ctc_01_asme1_ap242-e1.stp.gz`) and
 NIST's expected PMI for it from the STEP File Analyzer (`nist_ctc_01.expected.json`), both copied
-from pzfreo/quiddity-rust at commit 11a540e7 (`tests/fixtures/ap242/nist/`). NIST states its
+from pzfreo/quiddity (then quiddity-rust) at commit 11a540e7 (`tests/fixtures/ap242/nist/`). NIST states its
 models "can be used without any restrictions" and asks for acknowledgement, which this is; use
 does not imply a recommendation or endorsement by NIST.
 
 `specify/` holds specify-core's output (commit cc341dd6) on three corpus parts, copied from
-pzfreo/quiddity-rust at commit 11a540e7 (`tests/fixtures/ap242/specify/`): `spool_fits` on
+pzfreo/quiddity (then quiddity-rust) at commit 11a540e7 (`tests/fixtures/ap242/specify/`): `spool_fits` on
 CADGenBench's generated `flanged_spool_132` (Apache-2.0), `thumbwheel_thread_knurl` and
 `bolt_thread_knurl` on the author's GRM-03 and GRM-05 (Apache-2.0).
 

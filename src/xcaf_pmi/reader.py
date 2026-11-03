@@ -3,7 +3,7 @@ as a STEP without PMI.
 
 The intermediate form keeps OCCT's own vocabulary (its enumeration names) and refers to faces
 by the names the document gives them, with OCCT's face order and each face's geometry as a
-fallback. Mapping it to haecceity's PMI JSON (quiddity-rust#142) is a separate step.
+fallback. Mapping it to haecceity's PMI JSON (quiddity#142) is a separate step.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Both readings of a STEP (OCCT's own GD&T reader, and ``to_xcaf``) are taken through ``read``'s
 intermediate form and reduced to comparable facts, by category; so is what the file states:
-NIST's expected PMI for its test models (from the STEP File Analyzer, as quiddity-rust's
+NIST's expected PMI for its test models (from the STEP File Analyzer, as quiddity's
 ``tests/fixtures/ap242/nist/*.expected.json`` record it), the document a STEP was made from, or,
 for other files, haecceity's own reading. A fact is right when the reading has it too; each fact
 counts once for each time it is stated.
@@ -254,7 +254,7 @@ def _dimension(text: str, scale: float):
 
 
 def nist_facts(expected: dict[str, Any]) -> dict[str, Counter]:
-    """The facts of NIST's expected PMI for one of its models (quiddity-rust's ``expected.json``)."""
+    """The facts of NIST's expected PMI for one of its models (quiddity's ``expected.json``)."""
     scale = 25.4 if "INCH" in " ".join(expected["units"].get("unit_context_length_units", {})) else 1.0
     out = {key: Counter() for key, _ in CATEGORIES}
     letters: set[str] = set()

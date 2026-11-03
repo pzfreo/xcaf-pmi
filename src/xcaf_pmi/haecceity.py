@@ -1,5 +1,5 @@
 """Map the intermediate form (``read``) to haecceity's PMI JSON, ``haecceity.pmi/1``
-(quiddity-rust#142), for haecceity to write onto the STEP ``export_step`` made.
+(quiddity#142), for haecceity to write onto the STEP ``export_step`` made.
 
 Faces are referenced by the names ``export_step`` writes on them (``{"name": ...}``), or by
 index where a face has no name. One feature per reference, as haecceity's own export of a
