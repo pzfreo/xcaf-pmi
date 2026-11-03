@@ -65,17 +65,10 @@ def _input(argv: list[str]) -> str | None:
 
 
 def _presentation_left(shown: dict | None) -> str:
-    """The document's own saved views and placed callouts, as a phrase; empty when it has none."""
-    if not shown:
-        return ""
-    views = [v["name"] for v in shown.get("views", [])]
-    callouts = sum(len(listed) for listed in shown.get("items", {}).values())
-    said = []
-    if views:
-        said.append(f"{len(views)} saved view{'s' if len(views) > 1 else ''} ({', '.join(views)})")
-    if callouts:
-        said.append(f"the placement of {callouts} callout{'s' if callouts > 1 else ''}")
-    return " and ".join(said)
+    """The document's saved views, which the STEP leaves out (quiddity writes callout positions but
+    not yet saved views), as a phrase; empty when it has none."""
+    views = [v["name"] for v in (shown or {}).get("views", [])]
+    return f"{len(views)} saved view{'s' if len(views) > 1 else ''} ({', '.join(views)})" if views else ""
 
 
 def main(argv: list[str] | None = None) -> int:

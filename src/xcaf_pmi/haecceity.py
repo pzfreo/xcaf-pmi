@@ -577,6 +577,20 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
             "presentation": _presentation(found, pmi, ids, owners)}
 
 
+def _leader(shown: dict[str, Any]) -> list[float] | None:
+    """Where a callout's leader meets the part: the point the document states (a note's), or, for a
+    callout drawn as a bare leader (one line, ending at its text, as cadgen draws one), the line's
+    other end. Else none: a drawn callout's geometry does not say which point is on the part."""
+    if "leader" in shown:
+        return shown["leader"]
+    lines, text = shown.get("polylines", []), shown.get("text_point")
+    if text and len(lines) == 1 and len(lines[0]) == 2 and not shown.get("triangles"):
+        start, end = lines[0]
+        if max(abs(a - b) for a, b in zip(end, text)) < 1e-6:
+            return start
+    return None
+
+
 def _presentation(found: dict[str, Any], pmi: dict[str, Any], ids: dict[str, str],
                   owners: dict[str, tuple[str, str]]) -> dict[str, Any]:
     """The document's own callouts and saved views as ``haecceity.presentation/1``: each mapped
@@ -584,8 +598,8 @@ def _presentation(found: dict[str, Any], pmi: dict[str, Any], ids: dict[str, str
     point, and each view's camera and the callouts it shows."""
     mapped = {x["id"] for group in pmi.values() if isinstance(group, list) for x in group if isinstance(x, dict) and "id" in x}
     of: dict[str, str] = {}  # an XCAF item's entry to its id in the PMI
-    for group in ("dimensions", "tolerances"):
-        for item in found[group]:
+    for group in ("dimensions", "tolerances", "notes"):
+        for item in found.get(group, []):
             if ids.get(item["id"]) in mapped:
                 of[item["id"]] = ids[item["id"]]
     for d in found["datums"]:
@@ -595,8 +609,8 @@ def _presentation(found: dict[str, Any], pmi: dict[str, Any], ids: dict[str, str
             of[d["id"]] = f"datum/{d['name']}"
     items: dict[str, list] = {}
     planes, graphic_of = [], {}
-    for group in ("dimensions", "tolerances", "datums"):
-        for item in found[group]:
+    for group in ("dimensions", "tolerances", "datums", "notes"):
+        for item in found.get(group, []):
             shown = item.get("presentation")
             if not shown or item["id"] not in of or of[item["id"]] in items:
                 continue
@@ -611,6 +625,9 @@ def _presentation(found: dict[str, Any], pmi: dict[str, Any], ids: dict[str, str
                 graphic["text_placements"] = [{"origin": shown["text_point"],
                                                "x_axis": (plane or {}).get("x_axis", [1.0, 0.0, 0.0]),
                                                "normal": (plane or {}).get("normal", [0.0, 0.0, 1.0])}]
+            tip = _leader(shown)
+            if tip is not None:
+                graphic["leader"] = tip
             items[of[item["id"]]] = [graphic]
             graphic_of[item["id"]] = graphic["id"]
     views = [{"id": f"view/{i}", "name": v["name"] or f"view {i}", "direction": v["direction"], "up": v["up"],
