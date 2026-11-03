@@ -251,6 +251,27 @@ def _has_pmi(mapped: dict[str, Any]) -> bool:
         or pmi_["material"] is not None or pmi_.get("decimal_places") is not None
 
 
+def _placed(mapped: dict[str, Any]) -> dict[str, Any] | None:
+    """The document's own callout positions for the writer (quiddity 0.4.6): those placed on a
+    plane with a text position, of items still in the PMI written (an item left out has none to
+    place), and no saved views, which the writer cannot write yet."""
+    shown = mapped.get("presentation")
+    if not shown or not shown.get("items"):
+        return None
+    pmi_ = mapped["document"]["pmi"]
+    present = {x["id"] for group in pmi_.values() if isinstance(group, list) for x in group
+               if isinstance(x, dict) and "id" in x}
+    # A placement needs a text position on a plane; a callout without one gets the writer's layout.
+    items = {k: [g for g in v if g.get("text_placements") and g.get("plane_id")]
+             for k, v in shown["items"].items() if k in present}
+    items = {k: v for k, v in items.items() if v}
+    if not items:
+        return None
+    used = {g.get("plane_id") for listed in items.values() for g in listed}
+    return {**shown, "items": items, "planes": [p for p in shown.get("planes", []) if p["id"] in used],
+            "views": [], "semantic_ids": sorted(present)}
+
+
 def _write(geometry: bytes, mapped: dict[str, Any], which: int | None, strict: bool):
     """haecceity writing one part's PMI onto ``geometry``. Items to_xcaf kept whole that its
     writer refuses are left out, and said so (in ``mapped["refused"]``): those it names, then the
@@ -258,7 +279,8 @@ def _write(geometry: bytes, mapped: dict[str, Any], which: int | None, strict: b
     mapped.setdefault("refused", [])
     for attempt in range(4):
         try:
-            return pmi.write(geometry, mapped["document"], report=True, part=which)
+            return pmi.write(geometry, mapped["document"], report=True, part=which,
+                             presentation=_placed(mapped))
         except pmi.PmiError as error:
             refused = _refused(mapped, str(error), attempt)
             if not refused or attempt == 3:

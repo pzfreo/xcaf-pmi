@@ -88,6 +88,19 @@ def test_leaders_where_the_document_points_them():
     assert not any("leader" in g for g in drawn)
 
 
+def test_the_step_keeps_the_document_s_callout_positions():
+    """quiddity 0.4.6 writes the callouts where the document placed them: each text at its text
+    point, its leader to the point it was placed at on the part."""
+    written, report = to_step(CADGEN, report=True)
+    shown = report["presentation"]["items"]
+    out = pmi.presentation(written)["items"]
+    for item in ("datum/A", "hole-diameter", "thickness", "hole-position"):
+        source = shown[item][0]
+        placed = out[item][0]
+        assert placed["text_placements"][0]["origin"] == source["text_placements"][0]["origin"], item
+        assert placed["leader"] == source["leader"], item
+
+
 def test_callouts_where_the_document_places_them():
     """A STEP's callouts, through to_xcaf's XCAF presentation, come back as the file's own (source
     file), on their annotation planes."""
@@ -106,6 +119,7 @@ def test_cli_says_the_presentation_is_not_written(tmp_path, capsys):
     assert main(["to-step", str(CADGEN), "-o", str(tmp_path / "part.step")]) == 0
     said = capsys.readouterr().err
     assert "not written to the STEP" in said and "2 saved views (" in said and "A-A" in said and "iso" in said
+    assert "placement" not in said, "callout positions are written since quiddity 0.4.6"
     assert main(["to-step", str(CADGEN), "-o", str(tmp_path / "part.step"), "--presentation",
                  str(tmp_path / "p.json")]) == 0
     assert "not written to the STEP" not in capsys.readouterr().err
