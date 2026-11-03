@@ -213,7 +213,7 @@ def test_cadgen_plate_as_haecceity_json():
 
 def _round_trip(xbf, sent=None):
     """haecceity adds ``sent`` (by default, all ``to_step`` carries) to the document's geometry;
-    reading it back must give the same items, ids, faces and note owners (quiddity-rust#142's v1
+    reading it back must give the same items, ids, faces and note owners (quiddity#142's v1
     contract)."""
     found = read(xbf)
     if sent is None:

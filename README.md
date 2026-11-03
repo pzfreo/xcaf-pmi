@@ -6,7 +6,7 @@ document**, with more of its PMI than OpenCascade's own reader keeps.
 
 If your application builds parts with OpenCascade and keeps its dimensions and tolerances in an
 XCAF document (text-to-cad's cadgen does), xcaf-pmi reads them out and
-[haecceity](https://github.com/pzfreo/quiddity-rust) (in the `quiddity` package) writes them into
+[haecceity](https://github.com/pzfreo/quiddity) (in the `quiddity` package) writes them into
 the STEP as AP242, in one step.
 
 No GD&T in your document yet? xcaf-pmi only carries what is there. To add it, give the STEP to
@@ -222,8 +222,8 @@ the note and `to-step` writes the general tolerance it now states.
 ## More
 
 - The PMI JSON format (`haecceity.pmi/1`): its
-  [reference](https://github.com/pzfreo/quiddity-rust/blob/main/crates/haecceity/docs/pmi-json.md)
-  and [JSON Schema](https://github.com/pzfreo/quiddity-rust/blob/main/crates/haecceity/schema/haecceity.pmi-1.json).
+  [reference](https://github.com/pzfreo/quiddity/blob/main/crates/haecceity/docs/pmi-json.md)
+  and [JSON Schema](https://github.com/pzfreo/quiddity/blob/main/crates/haecceity/schema/haecceity.pmi-1.json).
 - To add manufacturing intent to a STEP that has none (fits, datums, tolerances, by answering a
   few questions): [Specify](https://pypi.org/project/specify-core/) (`pip install specify-core`),
   or [in the browser](https://draftwright.io/specify).

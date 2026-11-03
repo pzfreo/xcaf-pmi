@@ -5,7 +5,7 @@ it fails instead. The decompressed copies in the cache are checked against the v
 each time, and written again where they differ.
 
 Committed: NIST's CTC-01 with NIST's expected PMI, and three specify-core outputs on Apache-2.0
-corpus parts. Fetched from pzfreo/quiddity-rust (Apache-2.0): the other NIST models with their
+corpus parts. Fetched from pzfreo/quiddity (Apache-2.0): the other NIST models with their
 expected PMI (NIST's models may be used without restriction; they are fetched to keep this
 repository small) and four more specify-core outputs; from pzfreo/draftwright-rust (AGPL-3.0,
 so not committed here): the editor's CNC-review spindle as Specify wrote it.
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).parent / "fixtures"
-QUIDDITY = "https://raw.githubusercontent.com/pzfreo/quiddity-rust/11a540e735606d231c420096f299b15cf6059e03/tests/fixtures/ap242/"
+QUIDDITY = "https://raw.githubusercontent.com/pzfreo/quiddity/11a540e735606d231c420096f299b15cf6059e03/tests/fixtures/ap242/"
 DRAFTWRIGHT = "https://raw.githubusercontent.com/pzfreo/draftwright-rust/cb7395ab0c8ab62d06a5c41165fe5feaf5e7605f/tests/fixtures/samples/"
 FETCHED = {
     "nist/nist_ctc_02_asme1_ap242-e2.stp.gz": "07d46072b0c80ea1545392b3c23a33ca50b9c6be76da3a87f8f53c3ecdf59aee",
