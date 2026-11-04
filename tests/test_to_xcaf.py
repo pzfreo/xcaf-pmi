@@ -40,8 +40,8 @@ def test_ctc01(ctc01):
     assert profile["modifiers"] == ["XCAFDimTolObjects_GeomToleranceModif_All_Around"]
     ranged = [d["range"] for d in found["dimensions"] if "range" in d]
     assert ranged == [{"lower": 34.8, "upper": 35.2}] * 2
-    # haecceity's findings pass through: four dimensions state no value.
-    assert sum("no value is stated" in f["detail"] for f in report["findings"]) == 4
+    # Its four dimensions with no value are read as stated (quiddity 0.4.7): nothing to report.
+    assert report["findings"] == []
 
 
 def test_takes_bytes(ctc01):
@@ -354,11 +354,11 @@ ROUND_TRIP = {
     # an attribute haecceity's writer refuses (a unit it cannot state), and a tolerance on datum K, which lies on a surface OCCT reads beside the solid
     'nist_ctc_02_asme1_ap242-e2.stp': ([('attributes', 'attributes:aecadfb1293b4204b061b82510cb19dd'), ('tolerances', 'tolerances:58ff36f23e70211d824e926e9fe1503a')],
         []),
-    # attributes haecceity's writer refuses (units it cannot state)
-    'nist_ftc_07_asme1_ap242-e2.stp': ([('attributes', 'attributes:16c8ee821989f4018740cf6c2c696b9c'), ('attributes', 'attributes:28d714d9b8527952cc2274cb801f79d6'), ('attributes', 'attributes:35f4e80133fa741401fa24cfd9d08c6a'), ('attributes', 'attributes:3b2dd830acd1e27329fc9c9436c57581'), ('attributes', 'attributes:4aa5c25aef1efb86935a6b2962f806fe'), ('attributes', 'attributes:51585c436d670c2cddb69dec38d55882'), ('attributes', 'attributes:7d0fa79242281dcf207ca85be9a42c88'), ('attributes', 'attributes:8062abfaec269f037ae95254d064935e'), ('attributes', 'attributes:8639d6d1c19d6f0274d2158b02dea319'), ('attributes', 'attributes:97f7dde1dbd2eb21f6881166259e0025'), ('attributes', 'attributes:9eea3f7f11415fc54c9e5b887c180305'), ('attributes', 'attributes:c4a6d6a18907acc6b5ba0c9d5c774939'), ('attributes', 'attributes:e76dd223d9808de4289c500c5b53e999')],
+    # nothing (quiddity 0.4.7 writes the attributes with units it once refused)
+    'nist_ftc_07_asme1_ap242-e2.stp': ([],
         []),
-    # attributes haecceity's writer refuses, and items on the surfaces OCCT reads beside the solid (written as the document has them, without what XCAF cannot hold)
-    'nist_ftc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:16c8ee821989f4018740cf6c2c696b9c'), ('attributes', 'attributes:28d714d9b8527952cc2274cb801f79d6'), ('attributes', 'attributes:35f4e80133fa741401fa24cfd9d08c6a'), ('attributes', 'attributes:3b2dd830acd1e27329fc9c9436c57581'), ('attributes', 'attributes:4aa5c25aef1efb86935a6b2962f806fe'), ('attributes', 'attributes:4ffa3928397b1541f4c72454e59c4ee3'), ('attributes', 'attributes:51585c436d670c2cddb69dec38d55882'), ('attributes', 'attributes:6a2950652734e8543cdef501434250af'), ('attributes', 'attributes:7d0fa79242281dcf207ca85be9a42c88'), ('attributes', 'attributes:8062abfaec269f037ae95254d064935e'), ('attributes', 'attributes:8639d6d1c19d6f0274d2158b02dea319'), ('attributes', 'attributes:97f7dde1dbd2eb21f6881166259e0025'), ('attributes', 'attributes:9eea3f7f11415fc54c9e5b887c180305'), ('attributes', 'attributes:c4a6d6a18907acc6b5ba0c9d5c774939'), ('attributes', 'attributes:d3a59ed7ecccfe08a8c293e79002ce6e'), ('attributes', 'attributes:e76dd223d9808de4289c500c5b53e999'), ('attributes', 'attributes:fa688aa6fb140054afc228ea57706fbb'), ('datums', 'datums:23a72171b7511071cdba94e23b7dfe92'), ('datums', 'datums:787c03929b1d2ee2a32665068c119bf2'), ('dimensions', 'dimensions:0ecbd61f628ef7182429af794ece4604'), ('dimensions', 'dimensions:4485baf1674fa66afa9cd9cb4bdca601'), ('dimensions', 'dimensions:47190a2ce999413195414ce144d430e1'), ('dimensions', 'dimensions:ba2159ab649f7943d2bf43a9a7e6631b'), ('dimensions', 'dimensions:d26c2fc7e474f5221212a2ca3cbae6f1'), ('dimensions', 'dimensions:fd6cd4517348a71c3c15256914acf3e1'), ('tolerances', 'tolerances:39ad7cc323fd3f5a3cfb9adcaebc75d9'), ('tolerances', 'tolerances:678c3a33e83446ea84783d6cdfe2ec1a'), ('tolerances', 'tolerances:8d94999a56170ad214f6e98cbd2cfb0d'), ('tolerances', 'tolerances:cdc00e5af5bea8d4c3b4dd5daa7e86ed'), ('tolerances', 'tolerances:f4899251f862eb253dc80ad58805fcd4')],
+    # items on the surfaces OCCT reads beside the solid (written as the document has them, without what XCAF cannot hold)
+    'nist_ftc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:4ffa3928397b1541f4c72454e59c4ee3'), ('attributes', 'attributes:6a2950652734e8543cdef501434250af'), ('attributes', 'attributes:d3a59ed7ecccfe08a8c293e79002ce6e'), ('attributes', 'attributes:fa688aa6fb140054afc228ea57706fbb'), ('datums', 'datums:23a72171b7511071cdba94e23b7dfe92'), ('datums', 'datums:787c03929b1d2ee2a32665068c119bf2'), ('dimensions', 'dimensions:0ecbd61f628ef7182429af794ece4604'), ('dimensions', 'dimensions:4485baf1674fa66afa9cd9cb4bdca601'), ('dimensions', 'dimensions:47190a2ce999413195414ce144d430e1'), ('dimensions', 'dimensions:ba2159ab649f7943d2bf43a9a7e6631b'), ('dimensions', 'dimensions:d26c2fc7e474f5221212a2ca3cbae6f1'), ('dimensions', 'dimensions:fd6cd4517348a71c3c15256914acf3e1'), ('tolerances', 'tolerances:39ad7cc323fd3f5a3cfb9adcaebc75d9'), ('tolerances', 'tolerances:678c3a33e83446ea84783d6cdfe2ec1a'), ('tolerances', 'tolerances:8d94999a56170ad214f6e98cbd2cfb0d'), ('tolerances', 'tolerances:cdc00e5af5bea8d4c3b4dd5daa7e86ed'), ('tolerances', 'tolerances:f4899251f862eb253dc80ad58805fcd4')],
         [('datums', 'datum/K'), ('datums', 'datum/L'), ('dimensions', 'dimensions:4485baf1674fa66afa9cd9cb4bdca601'), ('dimensions', 'dimensions:ba2159ab649f7943d2bf43a9a7e6631b')]),
     # an attribute on an edge whose number haecceity gives cannot be checked
     'nist_stc_10_asme1_ap242-e2.stp': ([('attributes', 'attributes:a7d09f16d6a43f38a22c233c203ade51')],
@@ -451,6 +451,9 @@ def _units_named(document):
 def test_cli_verbs(ctc01, tmp_path, capsys):
     xbf = tmp_path / "part.xbf"
     assert main(["to-xcaf", str(ctc01), "-o", str(xbf)]) == 0
+    assert "read finding:" not in capsys.readouterr().err
+    # haecceity's findings pass through: FTC-07's dimension modifiers in a note, read as modifiers.
+    assert main(["to-xcaf", str(files.step("nist_ftc_07_asme1_ap242-e2.stp")), "-o", str(tmp_path / "ftc07.xbf")]) == 0
     assert "read finding:" in capsys.readouterr().err
     assert main(["to-step", str(xbf), "-o", str(tmp_path / "back.step")]) == 0
     assert len(pmi.read(tmp_path / "back.step")["pmi"]["tolerances"]) == 6
@@ -505,9 +508,10 @@ def test_findings_are_read_or_said_not_to_be(monkeypatch, tmp_path):
     from xcaf_pmi import from_step
 
     odd = tmp_path / "-part.stp"
-    shutil.copy(files.step(CTC01), odd)
+    shutil.copy(files.step("nist_ftc_07_asme1_ap242-e2.stp"), odd)
     monkeypatch.chdir(tmp_path)
-    assert sum("no value is stated" in f["detail"] for f in from_step.findings("-part.stp")) == 4
+    found = from_step.findings("-part.stp")
+    assert len(found) == 3 and any("dimension modifiers" in f["detail"] for f in found)
     monkeypatch.setattr(from_step, "_quiddity", lambda *args: subprocess.CompletedProcess(args, 1, "", "boom"))
     assert from_step.findings(odd) == [{"kind": "warning", "part": None, "entity": None, "ids": [],
                                         "detail": "haecceity's findings could not be read (quiddity pmi read: boom)"}]
