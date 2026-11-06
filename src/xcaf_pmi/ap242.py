@@ -187,7 +187,8 @@ def to_step(document: str | Path | bytes | Any, part: int | None = None, *, stri
         chosen = [part]
     else:
         # Each part with GD&T of its own, written one after the other onto the same STEP.
-        chosen = [i for i in range(len(found["parts"])) if _has_pmi(to_haecceity(found, i))] or [0]
+        chosen = [i for i, p in enumerate(found["parts"])
+                  if "manufacturing_process" in p or _has_pmi(to_haecceity(found, i))] or [0]
     geometry = geometry_step(doc)
     # quiddity numbers the STEP's parts itself: each of the document's parts is the one of its
     # name and number of faces, in order (never by position alone).

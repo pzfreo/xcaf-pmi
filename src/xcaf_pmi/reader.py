@@ -41,6 +41,8 @@ from OCP.XCAFDoc import (
 )
 from OCP.XmlXCAFDrivers import XmlXCAFDrivers
 
+from xcaf_pmi.process import DEFAULT, KEY
+
 FORMAT = "xcaf-pmi.intermediate/0"
 
 
@@ -138,6 +140,12 @@ class _Faces:
             TopExp.MapShapes_s(shape, TopAbs_FACE, faces)
             listed = [_face(TopoDS.Face(faces.FindKey(i)), i - 1) for i in range(1, faces.Extent() + 1)]
             self.parts.append({"name": _name(label), "entry": _entry(label), "faces": listed, "material": _material(label)})
+            data = shapes.GetNamedProperties(label)
+            if data is not None:
+                for key in (KEY, DEFAULT):
+                    name = TCollection_ExtendedString(key)
+                    if data.HasString(name):
+                        self.parts[-1][key] = data.GetString(name).ToExtString()
             edges = ShapeMap()
             TopExp.MapShapes_s(shape, TopAbs_EDGE, edges)
             self._edge_maps.append(edges)
@@ -638,6 +646,8 @@ def geometry_step(doc: TDocStd_Document) -> bytes:
     writer.SetMaterialMode(False)
     writer.SetVisualMaterialMode(True)
     writer.SetDimTolMode(False)
+    # Named data is mapped by to_haecceity; OCCT writes each key as its own property set.
+    writer.SetMetadataMode(False)
     if not writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs):
         raise RuntimeError("OCCT could not transfer the document to STEP")
     out = io.BytesIO()

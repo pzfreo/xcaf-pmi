@@ -133,9 +133,9 @@ print(report["findings"])                  # haecceity's findings on reading the
 
 `to_step(..., strict=True)` raises `xcaf_pmi.NotCarriedOver` (its `unmapped` lists what) instead
 of leaving anything out, and haecceity's refusals raise `quiddity.PmiError`. In a document of
-several parts, each part with PMI of its own (GD&T, notes, material, or what `to-xcaf` kept) has
-it written on its own part of the STEP, the parts matched to quiddity's by name and number of
-faces; `part=` takes only one. A part's items on another part's faces or datums are left out and
+several parts, each part with PMI of its own (GD&T, notes, material, manufacturing process, or
+what `to-xcaf` kept) has it written on its own part of the STEP, the parts matched to quiddity's
+by name and number of faces; `part=` takes only one. A part's items on another part's faces or datums are left out and
 listed. `read`, `export_step` and `to_haecceity` are the steps on their own. `read` and `to_step` also accept an XmlXCAF `.xml` document.
 
 ## What is carried over
@@ -154,6 +154,7 @@ listed. `read`, `export_step` and `to_haecceity` are the steps on their own. `re
 - **General tolerances** (ISO 2768), stated as a note of the part: see below.
 - **Material**, with its density stated in g/cm³. OCCT's own STEP writer gets that unit wrong
   (gram³·cm²), so readers ignore its density; this route writes it correctly.
+- **Manufacturing process**, as named data on the part: see [Manufacturing process](#manufacturing-process).
 - **Names:** your item names (e.g. `thickness`, `hole-position`) become the PMI's ids, and your face
   names are kept in the STEP, so the PMI points at faces by name.
 - **Drawn callouts:** each item gets a callout in haecceity's layout, linked to it as the CAx-IF
@@ -204,6 +205,32 @@ The other way, `to-xcaf` writes a STEP's ISO 2768 general tolerance as a note of
 canonical wording (or uses the STEP's own note of it, as Specify writes one), and keeps the
 tolerance on that note, so STEP → XCAF → STEP gives the same general tolerance and notes. Edit
 the note and `to-step` writes the general tolerance it now states.
+
+### Manufacturing process
+
+A code-first model (cadgen, build123d, or another XCAF writer) declares its process as a string
+in `TDataStd_NamedData` on the part's label, under `manufacturing_process`:
+
+```python
+from OCP.TCollection import TCollection_ExtendedString
+from OCP.TDataStd import TDataStd_NamedData
+
+TDataStd_NamedData.Set_s(part_label).SetString(
+    TCollection_ExtendedString("manufacturing_process"),
+    TCollection_ExtendedString("3D printed: FDM"),
+)
+```
+
+The options are `machined`, `3D printed: FDM`, `3D printed: resin`, `3D printed: powder`,
+`3D printed: metal`, `sheet metal`, `moulded`, and `cast` (case does not matter). `to-step`
+writes one `specify process` UDA property set on that part's `PRODUCT_DEFINITION`, which
+Specify reads as the file's process. An invalid value is listed as `not carried over` and
+fails `--strict`.
+
+`to-xcaf` reads a valid `manufacturing_process` item from any part-level attribute set into
+that key, ignoring case, spaces and hyphens in the item key. A fresh declaration writes no
+suggestion marker. An imported `default.manufacturing_process = 'true'` marker is kept as its
+own named data key and written back with the process, so an accepted suggestion round-trips.
 
 ## Limits
 
