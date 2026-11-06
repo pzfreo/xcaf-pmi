@@ -18,6 +18,8 @@ import json
 import re
 from typing import Any
 
+from xcaf_pmi.process import DEFAULT, KEY, process_value
+
 SCHEMA = "haecceity.pmi/1"
 MM = "unit/mm"
 DEGREE = "unit/degree"
@@ -524,6 +526,33 @@ def to_haecceity(found: dict[str, Any], part: int = 0) -> dict[str, Any]:
               "general": general, "threads": [], "knurls": [], "holes": [], "surface_textures": [],
               "tolerance_relations": [], "derived_geometry": []}
     restore(tuple(groups), groups)
+    held = found["parts"][part]
+    if KEY in held:
+        process = process_value(held[KEY])
+        if process is None:
+            unmapped.append(f"manufacturing process {held[KEY]!r}: not one of Specify's process options")
+        else:
+            items = [[KEY, {"text": process}]]
+            if held.get(DEFAULT) == "true":
+                items.append([DEFAULT, {"text": "true"}])
+            attributes = groups["attributes"]
+            at = next((i for i, a in enumerate(attributes)
+                       if a["value"]["on"] is None and a["value"]["name"] == "specify process"), None)
+            if at is not None:
+                items = attributes[at]["value"]["items"] + items
+                id = attributes[at]["id"]
+            else:
+                id = "specify process"
+                while any(a["id"] == id for a in attributes):
+                    id += "/process"
+            attribute = {"id": id, "value": {
+                "name": "specify process", "description": "user defined attribute", "on": None,
+                "general_property": {"id": "", "name": "specify process", "description": None}, "items": items}}
+            if at is None:
+                attributes.append(attribute)
+            else:
+                attributes[at] = attribute
+
     # A restored tolerance on a datum this part has not (one of another part's faces) cannot be
     # written on this part: left out, and said so.
     have = {d["id"] for d in datums}

@@ -65,6 +65,7 @@ from xcaf_pmi.haecceity import (
     ANGLE, DATUM_MODIFIER, DATUM_MODIFIER_WITH_VALUE, DIMENSION_MODIFIER, KEPT_SCHEMA, LOCATION, MATERIAL, QUALIFIER,
     SIZE, TOLERANCE, TOLERANCE_MODIFIER, general_text, general_tolerance,
 )
+from xcaf_pmi.process import DEFAULT, KEY, process_key, process_value
 
 # Each table of ``to_haecceity``, the other way round: haecceity's name to OCCT's.
 _SIZE = {v: k for k, v in SIZE.items()}
@@ -682,6 +683,24 @@ class _Builder:
         """User-defined attributes, as OCCT's reader keeps them: named values on the part's label,
         a face's label or a GD&T item's label."""
         for item in self.pmi["attributes"]:
+            a = item["value"]
+            if a["on"] is None:
+                processes = [(key, process_value(value.get("text"))) for key, value in a["items"]
+                             if process_key(key) == process_key(KEY)]
+                accepted = [(key, value) for key, value in processes if value is not None]
+                if accepted:
+                    data = self.named_data(self.part)
+                    self.attribute(data, KEY, {"text": accepted[0][1]}, "manufacturing process")
+                    markers = [(key, value) for key, value in a["items"]
+                               if process_key(key) == process_key(DEFAULT) and value == {"text": "true"}]
+                    if markers:
+                        self.attribute(data, DEFAULT, {"text": "true"}, "manufacturing process")
+                    consumed = {key for key, _ in accepted + markers}
+                    a = {**a, "items": [(key, value) for key, value in a["items"] if key not in consumed]}
+                    if not a["items"]:
+                        self.count("attribute")
+                        continue
+                    item = {**item, "value": a}
             # XCAF's named data does not read back as attributes: each is kept whole too.
             self.current = ("attributes", item)
             self.lossy[item["id"]] = self.current
