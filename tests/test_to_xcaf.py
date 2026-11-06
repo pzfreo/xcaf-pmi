@@ -270,8 +270,11 @@ def test_better_than_native(table):
     assert gaps.totals(table) == TOTALS
 
 
-FALLBACK = {"nist_stc_06_asme1_ap242-e3.stp": 2 * ["dimension CommonLabel 0: haecceity did not read it; "
-                                                    "OCCT's own reading of it is used"],
+# Neither falls back to OCCT since quiddity 0.4.8. STC-06's two OCCT fallbacks were "CommonLabel 0":
+# OCCT's reading of the part's general notes block as value-0 dimensions on no face. They were taken
+# only because quiddity 0.4.7 reported its default saved view as not read; 0.4.8 reads the view, and
+# haecceity carries the notes as semantic text (the converted document keeps their text).
+FALLBACK = {"nist_stc_06_asme1_ap242-e3.stp": [],
             "nist_stc_09_asme1_ap242-e4.stp": []}
 
 
@@ -279,8 +282,7 @@ FALLBACK = {"nist_stc_06_asme1_ap242-e3.stp": 2 * ["dimension CommonLabel 0: hae
 def test_haecceity_reads_duplicate_item_ids(name):
     """quiddity 0.4.0 refused these models whole over their attributes' duplicate or empty ids;
     since 0.4.4 it gives such items content ids instead, so to_xcaf has haecceity's reading of
-    them rather than OCCT's. (On STC-06 haecceity does not read a shape aspect that identifies no
-    face, so OCCT's reading of what is on it is taken, item by item.)"""
+    them rather than OCCT's."""
     assert pmi.read(files.step(name))["pmi"]["tolerances"]
     doc, report = to_xcaf(files.step(name), report=True)
     assert [f["detail"] for f in report["findings"] if f["kind"] == "fallback"] == FALLBACK[name]
