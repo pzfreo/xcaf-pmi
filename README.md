@@ -241,8 +241,6 @@ own named data key and written back with the process, so an accepted suggestion 
   STC-06 and STC-09 over their attributes' duplicate or empty ids.)
 - quiddity 0.4 states no STEP entity for an edge: `to-xcaf` checks haecceity's edge numbers against
   the edges the STEP's PMI is on, and reports those it cannot check (two of NIST STC-10's).
-- OpenCascade's STEP reader cannot read a string longer than its scanner's buffer; quiddity 0.4
-  writes its map of item ids as one string, which on NIST's STC-10 is too long for it (47 kB).
 - Where OpenCascade reads a part as a solid with surfaces beside it (some NIST models), PMI on those
   surfaces is carried into XCAF but not back to STEP.
 
