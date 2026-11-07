@@ -17,7 +17,7 @@ what is missing.
 ## Install
 
 ```bash
-pip install git+https://github.com/pzfreo/xcaf-pmi        # Python 3.11+, brings OCP and quiddity
+pip install xcaf-pmi        # Python 3.11+, brings OCP and quiddity
 ```
 
 ## Make an AP242 STEP
