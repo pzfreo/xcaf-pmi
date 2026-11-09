@@ -7,7 +7,7 @@ each time, and written again where they differ.
 Committed: NIST's CTC-01 with NIST's expected PMI, and three specify-core outputs on Apache-2.0
 corpus parts. Fetched from pzfreo/quiddity (Apache-2.0): the other NIST models with their
 expected PMI (NIST's models may be used without restriction; they are fetched to keep this
-repository small) and four more specify-core outputs; from pzfreo/draftwright-rust (AGPL-3.0,
+repository small) and four more specify-core outputs; from pzfreo/draftwright (AGPL-3.0,
 so not committed here): the editor's CNC-review spindle as Specify wrote it.
 """
 
@@ -23,7 +23,7 @@ import pytest
 
 HERE = Path(__file__).parent / "fixtures"
 QUIDDITY = "https://raw.githubusercontent.com/pzfreo/quiddity/11a540e735606d231c420096f299b15cf6059e03/tests/fixtures/ap242/"
-DRAFTWRIGHT = "https://raw.githubusercontent.com/pzfreo/draftwright-rust/cb7395ab0c8ab62d06a5c41165fe5feaf5e7605f/tests/fixtures/samples/"
+DRAFTWRIGHT = "https://raw.githubusercontent.com/pzfreo/draftwright/cb7395ab0c8ab62d06a5c41165fe5feaf5e7605f/tests/fixtures/samples/"
 FETCHED = {
     "nist/nist_ctc_02_asme1_ap242-e2.stp.gz": "07d46072b0c80ea1545392b3c23a33ca50b9c6be76da3a87f8f53c3ecdf59aee",
     "nist/nist_ctc_02.expected.json": "5487746922c7254cba9a775e38f65fd93abae03b3a4e6fdb73cc701d653dfb41",
