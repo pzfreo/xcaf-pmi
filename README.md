@@ -1,5 +1,12 @@
 # xcaf-pmi
 
+<p>
+  <a href="https://pypi.org/project/xcaf-pmi/"><img src="https://img.shields.io/pypi/v/xcaf-pmi.svg" alt="PyPI"></a>
+  <a href="https://pypi.org/project/xcaf-pmi/"><img src="https://img.shields.io/pypi/pyversions/xcaf-pmi.svg" alt="Python versions"></a>
+  <a href="https://github.com/pzfreo/xcaf-pmi/actions/workflows/test.yml"><img src="https://github.com/pzfreo/xcaf-pmi/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache--2.0-blue.svg" alt="Licence: Apache-2.0"></a>
+</p>
+
 **Turn the GD&T in an OpenCascade document (`.xbf`) into an AP242 STEP file with semantic PMI**,
 the form that CAD, CAM and inspection tools read, **and an AP242 STEP back into an OpenCascade
 document**, with more of its PMI than OpenCascade's own reader keeps.
