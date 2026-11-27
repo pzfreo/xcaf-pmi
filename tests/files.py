@@ -4,10 +4,10 @@ the test is skipped when they cannot be fetched; with ``XCAF_PMI_REQUIRE_FIXTURE
 it fails instead. The decompressed copies in the cache are checked against the verified archive
 each time, and written again where they differ.
 
-Committed: NIST's CTC-01 with NIST's expected PMI, and three specify-core outputs on Apache-2.0
+Committed: NIST's CTC-01 with NIST's expected PMI, and three Specify outputs on Apache-2.0
 corpus parts. Fetched from pzfreo/quiddity (Apache-2.0): the other NIST models with their
 expected PMI (NIST's models may be used without restriction; they are fetched to keep this
-repository small) and four more specify-core outputs; from pzfreo/draftwright (AGPL-3.0,
+repository small) and four more Specify outputs; from pzfreo/draftwright (AGPL-3.0,
 so not committed here): the editor's CNC-review spindle as Specify wrote it.
 """
 
