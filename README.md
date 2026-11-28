@@ -17,7 +17,7 @@ XCAF document (text-to-cad's cadgen does), xcaf-pmi reads them out and
 the STEP as AP242, in one step.
 
 No GD&T in your document yet? xcaf-pmi only carries what is there. To add it, give the STEP to
-[Specify](https://pypi.org/project/specify-core/) (`pip install specify-core`, or
+[Specify](https://pypi.org/project/specify-pmi/) (`pip install specify-pmi`, or
 [in the browser](https://draftwright.io/specify)): it recognises the features and asks only
 what is missing.
 
@@ -257,7 +257,7 @@ own named data key and written back with the process, so an accepted suggestion 
   [reference](https://github.com/pzfreo/quiddity/blob/main/crates/haecceity/docs/pmi-json.md)
   and [JSON Schema](https://github.com/pzfreo/quiddity/blob/main/crates/haecceity/schema/haecceity.pmi-1.json).
 - To add manufacturing intent to a STEP that has none (fits, datums, tolerances, by answering a
-  few questions): [Specify](https://pypi.org/project/specify-core/) (`pip install specify-core`),
+  few questions): [Specify](https://pypi.org/project/specify-pmi/) (`pip install specify-pmi`),
   or [in the browser](https://draftwright.io/specify).
 - Developing xcaf-pmi: `pip install -e '.[test]'` and `pytest`, which includes the end-to-end tests
   through haecceity. `tests/make_plate.py` builds a test document
